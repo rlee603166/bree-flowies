@@ -8,7 +8,6 @@
     "scheme": "breeflowies",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.sharify.bree-flowies"
     },
     "android": {

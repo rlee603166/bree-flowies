@@ -3,7 +3,7 @@ import * as Device from 'expo-device';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/ui/app-button';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -26,6 +26,7 @@ export default function CameraScreen() {
   const router = useRouter();
   const userId = useUserId();
 
+  const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
   const capturing = useRef(false);
   const [flashAnim] = useState(() => new Animated.Value(0));
@@ -83,8 +84,8 @@ export default function CameraScreen() {
   const totalShots = priorShots + sessionShots;
 
   return (
-    <View style={styles.body}>
-      <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.body, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.safeArea}>
         {/* top controls */}
         <View style={styles.topRow}>
           <Pressable onPress={() => router.back()} hitSlop={12} style={styles.control}>
@@ -182,7 +183,7 @@ export default function CameraScreen() {
             <Text style={styles.statusText}>photos develop after the event ends 🎞️</Text>
           )}
         </View>
-      </SafeAreaView>
+      </View>
 
       {/* shutter flash */}
       <Animated.View pointerEvents="none" style={[styles.flashOverlay, { opacity: flashAnim }]} />
