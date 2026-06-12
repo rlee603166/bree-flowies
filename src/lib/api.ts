@@ -116,6 +116,7 @@ export async function signedPhotoUrls(paths: string[]): Promise<Map<string, stri
   const { data, error } = await supabase.storage.from('photos').createSignedUrls(paths, 60 * 60);
   if (error) throw error;
   const byPath = new Map<string, string>();
+  console.log(data)
   for (const entry of data) {
     if (entry.signedUrl && entry.path) byPath.set(entry.path, entry.signedUrl);
   }

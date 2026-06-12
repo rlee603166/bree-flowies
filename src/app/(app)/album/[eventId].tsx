@@ -105,6 +105,11 @@ export default function AlbumScreen() {
         onRequestClose={() => setViewerIndex(null)}
       >
         <View style={styles.viewer}>
+          <SafeAreaView edges={['top']} style={styles.viewerHeader}>
+            <Pressable onPress={() => setViewerIndex(null)} hitSlop={12} style={styles.viewerClose}>
+              <ThemedText style={styles.viewerCloseText}>✕</ThemedText>
+            </Pressable>
+          </SafeAreaView>
           <FlatList
             data={photos}
             keyExtractor={(p) => p.id}
@@ -126,11 +131,6 @@ export default function AlbumScreen() {
               </View>
             )}
           />
-          <SafeAreaView style={styles.viewerClose}>
-            <Pressable onPress={() => setViewerIndex(null)} hitSlop={12}>
-              <ThemedText style={styles.viewerCloseText}>✕</ThemedText>
-            </Pressable>
-          </SafeAreaView>
         </View>
       </Modal>
     </ThemedView>
@@ -172,11 +172,13 @@ const styles = StyleSheet.create({
     color: '#B0B4BA',
     marginTop: Spacing.three,
   },
+  viewerHeader: {
+    backgroundColor: '#000',
+  },
   viewerClose: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    paddingLeft: Spacing.four,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    alignSelf: 'flex-start',
   },
   viewerCloseText: {
     color: '#fff',
