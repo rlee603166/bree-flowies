@@ -1,12 +1,16 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { AppButton } from '@/components/ui/app-button';
 import { AppTextInput } from '@/components/ui/app-text-input';
-import { Spacing } from '@/constants/theme';
+import { AvatarStack } from '@/components/ui/avatar';
+import { FilmStrip } from '@/components/ui/film-strip';
+import { PeopleSheet } from '@/components/ui/people-sheet';
+import { QrPoster } from '@/components/ui/qr-poster';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   createEvent,
@@ -22,6 +26,9 @@ import {
 } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
 import { eventPhase, formatDevelopTime, formatEventDate } from '@/lib/event-state';
+import { inviteLink } from '@/lib/invite';
+import { onGroupActivity, type ShotEvent } from '@/lib/realtime';
+import { displayName } from '@/lib/names';
 
 export default function GroupScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,6 +44,7 @@ export default function GroupScreen() {
   const [eventName, setEventName] = useState('');
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [peopleOpen, setPeopleOpen] = useState(false);
 
   const activeEvent = useMemo(() => events.find((e) => e.status === 'active') ?? null, [events]);
   const pastEvents = useMemo(() => events.filter((e) => e.status !== 'active'), [events]);
@@ -66,12 +74,48 @@ export default function GroupScreen() {
     }, [refresh])
   );
 
+  // Keep the active event id reachable from realtime callbacks without
+  // re-subscribing every time the events list changes.
+  const activeEventIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeEventIdRef.current = activeEvent?.id ?? null;
+  }, [activeEvent]);
+
+  // Bump a person's shot chip the instant they shoot, from the per-group
+  // broadcast (carries no photo data). A full refresh on focus reconciles.
+  const handleShot = useCallback((shot: ShotEvent) => {
+    if (shot.event_id !== activeEventIdRef.current) return;
+    setCounts((prev) => {
+      const i = prev.findIndex((c) => c.user_id === shot.taken_by);
+      if (i === -1) return [...prev, { user_id: shot.taken_by, shots: 1 }];
+      const next = [...prev];
+      next[i] = { ...next[i], shots: next[i].shots + 1 };
+      return next;
+    });
+  }, []);
+
+  // Live: events starting/ending in this group re-pull; per-shot broadcasts
+  // tick the counts. One private channel handles both.
+  useEffect(
+    () => onGroupActivity(id, { onEventsChange: refresh, onShot: handleShot }),
+    [id, refresh, handleShot]
+  );
+
   const shareCode = () => {
     if (!group) return;
     Share.share({
-      message: `Join "${group.name}" on bree flowies with code ${group.join_code}`,
+      message: `Join "${group.name}" on bree flowies — scan the QR, open ${inviteLink(
+        group.join_code
+      )}, or use code ${group.join_code}`,
     });
   };
+
+  const eventHostName = useMemo(() => {
+    if (!activeEvent) return null;
+    if (activeEvent.created_by === userId) return 'you';
+    const host = members.find((m) => m.user_id === activeEvent.created_by);
+    return host ? displayName(host) : null;
+  }, [activeEvent, members, userId]);
 
   const startEvent = async () => {
     if (!eventName.trim()) return;
@@ -113,47 +157,77 @@ export default function GroupScreen() {
       {group && (
         <Pressable
           onPress={shareCode}
-          style={[styles.codeCard, { backgroundColor: theme.backgroundElement }]}
+          style={[styles.codeCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
         >
-          <View style={styles.codeCardText}>
-            <ThemedText type="small" themeColor="textSecondary">
-              join code · tap to share
+          <View style={styles.codeCardTop}>
+            <ThemedText type="label" themeColor="textSecondary">
+              invite
             </ThemedText>
-            <ThemedText type="subtitle" style={styles.code}>
-              {group.join_code}
+            <ThemedText type="label" themeColor="accent">
+              share ↗
             </ThemedText>
           </View>
+          <QrPoster code={group.join_code} />
         </Pressable>
       )}
 
-      <ThemedText type="small" themeColor="textSecondary">
-        {members.map((m) => m.username).join(' · ')}
-      </ThemedText>
+      <Pressable
+        onPress={() => members.length > 0 && setPeopleOpen(true)}
+        style={styles.membersRow}
+        hitSlop={8}
+      >
+        <AvatarStack names={members.map((m) => displayName(m))} />
+        <ThemedText type="label" themeColor="textSecondary">
+          {members.length} in the group ›
+        </ThemedText>
+      </Pressable>
 
       {activeEvent ? (
-        <View style={[styles.activeCard, { borderColor: theme.accent }]}>
-          <ThemedText type="small" style={{ color: theme.accent }}>
+        <View
+          style={[
+            styles.activeCard,
+            { borderColor: theme.accent, backgroundColor: theme.backgroundElement },
+          ]}
+        >
+          <ThemedText type="label" style={{ color: theme.accent }}>
             ● live now
           </ThemedText>
           <ThemedText type="subtitle">{activeEvent.name}</ThemedText>
+          {eventHostName && (
+            <ThemedText type="label" themeColor="textSecondary">
+              {eventHostName === 'you' ? "you're hosting" : `hosted by ${eventHostName}`}
+            </ThemedText>
+          )}
           <View style={styles.shotCounts}>
             {members.map((m) => {
               const shots = counts.find((c) => c.user_id === m.user_id)?.shots ?? 0;
               return (
-                <ThemedText key={m.user_id} type="small" themeColor="textSecondary">
-                  {m.username}: {shots} {shots === 1 ? 'shot' : 'shots'}
-                </ThemedText>
+                <View
+                  key={m.user_id}
+                  style={[styles.shotChip, { backgroundColor: theme.backgroundSelected }]}
+                >
+                  <ThemedText type="code" themeColor="textSecondary">
+                    {displayName(m)}{' '}
+                    <ThemedText type="code" themeColor="text">
+                      {String(shots).padStart(2, '0')}
+                    </ThemedText>
+                  </ThemedText>
+                </View>
               );
             })}
           </View>
           <AppButton
-            title="📸  Open camera"
+            title="● open camera"
             onPress={() =>
               router.push({ pathname: '/camera/[eventId]', params: { eventId: activeEvent.id } })
             }
           />
           {activeEvent.created_by === userId && (
-            <AppButton title="End event" variant="danger" onPress={confirmEndEvent} />
+            <Pressable onPress={confirmEndEvent} style={styles.endEvent} hitSlop={8}>
+              <ThemedText type="label" themeColor="danger">
+                end event
+              </ThemedText>
+            </Pressable>
           )}
         </View>
       ) : creatingEvent ? (
@@ -165,15 +239,15 @@ export default function GroupScreen() {
             onChangeText={setEventName}
             onSubmitEditing={startEvent}
           />
-          <AppButton title="Start shooting" loading={busy} disabled={!eventName.trim()} onPress={startEvent} />
-          <AppButton title="Cancel" variant="secondary" onPress={() => setCreatingEvent(false)} />
+          <AppButton title="start shooting" loading={busy} disabled={!eventName.trim()} onPress={startEvent} />
+          <AppButton title="cancel" variant="secondary" onPress={() => setCreatingEvent(false)} />
         </View>
       ) : (
-        <AppButton title="＋ New event" onPress={() => setCreatingEvent(true)} />
+        <AppButton title="＋ new event" onPress={() => setCreatingEvent(true)} />
       )}
 
       {pastEvents.length > 0 && (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.pastLabel}>
+        <ThemedText type="label" themeColor="textSecondary" style={styles.pastLabel}>
           past events
         </ThemedText>
       )}
@@ -199,20 +273,35 @@ export default function GroupScreen() {
               }
               style={({ pressed }) => [
                 styles.eventRow,
-                { backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement },
+                {
+                  backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+                  borderColor: theme.border,
+                },
               ]}
             >
+              <FilmStrip direction="column" count={4} holeSize={4} style={styles.eventPerforation} />
               <View style={styles.eventRowText}>
                 <ThemedText>{item.name}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
+                <ThemedText type="code" themeColor="textSecondary">
                   {formatEventDate(item.started_at)}
-                  {phase === 'developing' && ` · developing, ready ${formatDevelopTime(item.develops_at)}`}
                 </ThemedText>
+                {phase === 'developing' && (
+                  <ThemedText type="label" style={{ color: theme.accent }}>
+                    developing · ready {formatDevelopTime(item.develops_at)}
+                  </ThemedText>
+                )}
               </View>
               <ThemedText themeColor="textSecondary">{phase === 'developing' ? '🎞️' : '›'}</ThemedText>
             </Pressable>
           );
         }}
+      />
+      <PeopleSheet
+        visible={peopleOpen}
+        onClose={() => setPeopleOpen(false)}
+        members={members}
+        hostUserId={group?.created_by ?? null}
+        currentUserId={userId}
       />
     </ThemedView>
   );
@@ -231,23 +320,40 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   codeCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 1,
     padding: Spacing.three,
+    gap: Spacing.three,
   },
-  codeCardText: {
-    gap: Spacing.half,
+  codeCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  code: {
-    letterSpacing: 6,
+  membersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
   },
   activeCard: {
-    borderWidth: 2,
-    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.three,
   },
   shotCounts: {
-    gap: Spacing.half,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  shotChip: {
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three - 4,
+    paddingVertical: Spacing.one + 2,
+  },
+  endEvent: {
+    alignSelf: 'center',
+    padding: Spacing.one,
   },
   newEventForm: {
     gap: Spacing.two,
@@ -259,10 +365,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+  },
+  eventPerforation: {
+    marginRight: Spacing.three,
   },
   eventRowText: {
     flex: 1,
-    gap: Spacing.half,
+    gap: Spacing.one,
   },
 });

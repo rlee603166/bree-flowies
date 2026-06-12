@@ -6,20 +6,22 @@ import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/ui/app-button';
-import { Fonts, Spacing } from '@/constants/theme';
-import { shotCounts } from '@/lib/api';
+import { FilmStrip } from '@/components/ui/film-strip';
+import { Colors, Fonts, Spacing } from '@/constants/theme';
+import { getEvent, shotCounts } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
 import { createFakePhotoBytes } from '@/lib/fake-photo';
+import { onEventChange } from '@/lib/realtime';
 import { enqueuePhoto, getUploads, retryFailedUploads, subscribeToUploads } from '@/lib/upload-queue';
 
 // Simulators have no camera; in dev we fake the shutter so the whole
 // capture -> develop -> album flow stays testable.
 const FAKE_CAMERA = __DEV__ && !Device.isDevice;
 
-const BODY = '#17171A';
-const PANEL = '#222226';
-const TRIM = '#3A3A40';
-const ACCENT = '#F2660F';
+const BODY = Colors.background;
+const PANEL = Colors.backgroundElement;
+const TRIM = Colors.border;
+const ACCENT = Colors.accent;
 
 export default function CameraScreen() {
   const { eventId } = useLocalSearchParams<{ eventId: string }>();
@@ -37,6 +39,7 @@ export default function CameraScreen() {
   const [flash, setFlash] = useState<FlashMode>('off');
   const [priorShots, setPriorShots] = useState(0);
   const [sessionShots, setSessionShots] = useState(0);
+  const [rollClosed, setRollClosed] = useState(false);
 
   const uploads = useSyncExternalStore(subscribeToUploads, getUploads);
   const eventUploads = uploads.filter((u) => u.eventId === eventId);
@@ -48,6 +51,20 @@ export default function CameraScreen() {
       .then((counts) => setPriorShots(counts.find((c) => c.user_id === userId)?.shots ?? 0))
       .catch(() => {});
   }, [eventId, userId]);
+
+  // Close the roll the moment the host ends it — even mid-shoot. Also covers
+  // the stale-entry case: if the event was already ended before this screen
+  // opened, the initial check closes it too.
+  useEffect(() => {
+    getEvent(eventId)
+      .then((event) => {
+        if (event.status !== 'active') setRollClosed(true);
+      })
+      .catch(() => {});
+    return onEventChange(eventId, (event) => {
+      if (event.status !== 'active') setRollClosed(true);
+    });
+  }, [eventId]);
 
   useEffect(() => {
     if (!FAKE_CAMERA && permission && !permission.granted && permission.canAskAgain) {
@@ -61,7 +78,7 @@ export default function CameraScreen() {
   };
 
   const snap = async () => {
-    if (capturing.current) return;
+    if (rollClosed || capturing.current) return;
     capturing.current = true;
     try {
       if (FAKE_CAMERA) {
@@ -81,6 +98,7 @@ export default function CameraScreen() {
   };
 
   const needsPermission = !FAKE_CAMERA && (!permission || !permission.granted);
+  const shutterDisabled = needsPermission || rollClosed;
   const totalShots = priorShots + sessionShots;
 
   return (
@@ -98,7 +116,7 @@ export default function CameraScreen() {
               hitSlop={12}
               style={[styles.control, flash === 'on' && styles.controlActive]}
             >
-              <Text style={styles.controlText}>⚡︎</Text>
+              <Text style={[styles.controlText, flash === 'on' && { color: Colors.onAccent }]}>⚡︎</Text>
             </Pressable>
             <Pressable
               onPress={() => setFacing(facing === 'back' ? 'front' : 'back')}
@@ -130,6 +148,14 @@ export default function CameraScreen() {
                 onCameraReady={() => setCameraReady(true)}
               />
             )}
+            <View pointerEvents="none" style={styles.viewfinderOverlay}>
+              <View style={[styles.corner, styles.cornerTL]} />
+              <View style={[styles.corner, styles.cornerTR]} />
+              <View style={[styles.corner, styles.cornerBL]} />
+              <View style={[styles.corner, styles.cornerBR]} />
+              <View style={styles.crosshairH} />
+              <View style={styles.crosshairV} />
+            </View>
           </View>
         </View>
 
@@ -141,16 +167,18 @@ export default function CameraScreen() {
                 : 'enable camera access in Settings'}
             </Text>
             {permission.canAskAgain && (
-              <AppButton title="Allow camera" onPress={requestPermission} />
+              <AppButton title="allow camera" onPress={requestPermission} />
             )}
           </View>
         )}
 
         {/* film counter */}
         <View style={styles.counterRow}>
+          <FilmStrip count={6} color={TRIM} />
           <View style={styles.counterWindow}>
             <Text style={styles.counterText}>{String(totalShots).padStart(2, '0')}</Text>
           </View>
+          <FilmStrip count={6} color={TRIM} />
           <Text style={styles.counterLabel}>shots on your roll</Text>
         </View>
 
@@ -158,11 +186,11 @@ export default function CameraScreen() {
         <View style={styles.shutterRow}>
           <Pressable
             onPress={snap}
-            disabled={needsPermission}
+            disabled={shutterDisabled}
             style={({ pressed }) => [
               styles.shutterOuter,
               pressed && styles.shutterPressed,
-              needsPermission && styles.shutterDisabled,
+              shutterDisabled && styles.shutterDisabled,
             ]}
           >
             <View style={styles.shutterInner} />
@@ -184,6 +212,20 @@ export default function CameraScreen() {
           )}
         </View>
       </View>
+
+      {/* roll closed — soft block: shutter is dead, they tap out when ready */}
+      {rollClosed && (
+        <View style={[styles.closedOverlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+          <FilmStrip count={8} color={TRIM} />
+          <Text style={styles.closedTitle}>this roll just closed</Text>
+          <Text style={styles.closedBody}>
+            the host ended the event — your shots are developing 🎞️
+          </Text>
+          <View style={styles.closedAction}>
+            <AppButton title="back to group" onPress={() => router.back()} />
+          </View>
+        </View>
+      )}
 
       {/* shutter flash */}
       <Animated.View pointerEvents="none" style={[styles.flashOverlay, { opacity: flashAnim }]} />
@@ -221,14 +263,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   controlActive: {
+    backgroundColor: ACCENT,
     borderColor: ACCENT,
   },
   controlText: {
-    color: '#E6E6E9',
+    color: Colors.text,
     fontSize: 18,
   },
   brand: {
-    color: '#6E6E76',
+    color: Colors.textSecondary,
     fontFamily: Fonts.mono,
     fontSize: 12,
     letterSpacing: 2,
@@ -246,14 +289,46 @@ const styles = StyleSheet.create({
     borderColor: TRIM,
     backgroundColor: '#000',
   },
+  viewfinderOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  corner: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderColor: ACCENT,
+  },
+  cornerTL: { top: 5, left: 5, borderTopWidth: 1.5, borderLeftWidth: 1.5 },
+  cornerTR: { top: 5, right: 5, borderTopWidth: 1.5, borderRightWidth: 1.5 },
+  cornerBL: { bottom: 5, left: 5, borderBottomWidth: 1.5, borderLeftWidth: 1.5 },
+  cornerBR: { bottom: 5, right: 5, borderBottomWidth: 1.5, borderRightWidth: 1.5 },
+  crosshairH: {
+    width: 12,
+    height: 1,
+    backgroundColor: ACCENT,
+    opacity: 0.7,
+  },
+  crosshairV: {
+    position: 'absolute',
+    width: 1,
+    height: 12,
+    backgroundColor: ACCENT,
+    opacity: 0.7,
+  },
   viewfinderFallback: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0B0B0D',
+    backgroundColor: '#000',
   },
   fallbackText: {
-    color: '#6E6E76',
+    color: Colors.textSecondary,
     fontFamily: Fonts.mono,
     fontSize: 11,
     textAlign: 'center',
@@ -269,7 +344,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   counterWindow: {
-    backgroundColor: '#0B0B0D',
+    backgroundColor: '#000',
     borderWidth: 1,
     borderColor: TRIM,
     borderRadius: 8,
@@ -277,13 +352,13 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   counterText: {
-    color: '#F5D90A',
+    color: ACCENT,
     fontFamily: Fonts.mono,
     fontSize: 44,
     fontVariant: ['tabular-nums'],
   },
   counterLabel: {
-    color: '#6E6E76',
+    color: Colors.textSecondary,
     fontFamily: Fonts.mono,
     fontSize: 12,
     letterSpacing: 1,
@@ -320,12 +395,12 @@ const styles = StyleSheet.create({
     minHeight: 36,
   },
   statusText: {
-    color: '#6E6E76',
+    color: Colors.textSecondary,
     fontFamily: Fonts.mono,
     fontSize: 12,
   },
   statusFailed: {
-    color: '#E5484D',
+    color: Colors.danger,
   },
   flashOverlay: {
     position: 'absolute',
@@ -334,5 +409,35 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: '#FFFFFF',
+  },
+  closedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: BODY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.five,
+    gap: Spacing.four,
+  },
+  closedTitle: {
+    color: ACCENT,
+    fontFamily: Fonts.mono,
+    fontSize: 20,
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  closedBody: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  closedAction: {
+    alignSelf: 'stretch',
+    marginTop: Spacing.two,
   },
 });

@@ -32,7 +32,7 @@ export type Database = {
       events: {
         Row: {
           created_at: string
-          created_by: string
+          created_by: string | null
           develops_at: string | null
           ended_at: string | null
           group_id: string
@@ -44,7 +44,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          created_by: string
+          created_by?: string | null
           develops_at?: string | null
           ended_at?: string | null
           group_id: string
@@ -56,7 +56,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           develops_at?: string | null
           ended_at?: string | null
           group_id?: string
@@ -122,21 +122,21 @@ export type Database = {
       groups: {
         Row: {
           created_at: string
-          created_by: string
+          created_by: string | null
           id: string
           join_code: string
           name: string
         }
         Insert: {
           created_at?: string
-          created_by: string
+          created_by?: string | null
           id?: string
           join_code?: string
           name: string
         }
         Update: {
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           id?: string
           join_code?: string
           name?: string
@@ -197,19 +197,25 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
+          first_name: string | null
           id: string
+          last_name: string | null
           username: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
+          first_name?: string | null
           id: string
+          last_name?: string | null
           username: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
+          first_name?: string | null
           id?: string
+          last_name?: string | null
           username?: string
         }
         Relationships: []
@@ -223,18 +229,12 @@ export type Database = {
         Args: { p_ended_at: string; p_timezone: string }
         Returns: string
       }
-      event_shot_counts: {
-        Args: { p_event_id: string }
-        Returns: {
-          user_id: string
-          shots: number
-        }[]
-      }
+      delete_account: { Args: never; Returns: undefined }
       end_event: {
         Args: { p_event_id: string }
         Returns: {
           created_at: string
-          created_by: string
+          created_by: string | null
           develops_at: string | null
           ended_at: string | null
           group_id: string
@@ -250,6 +250,13 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      event_shot_counts: {
+        Args: { p_event_id: string }
+        Returns: {
+          shots: number
+          user_id: string
+        }[]
       }
       is_group_member: {
         Args: { p_group_id: string; p_user_id: string }

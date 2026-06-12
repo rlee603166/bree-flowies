@@ -1,59 +1,41 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * "Film lab" theme — the app is dark-only by design (a darkroom).
+ * Warm near-blacks, one loud acid-green accent, mono type for anything
+ * that reads like camera hardware (counters, codes, timers, labels).
  */
 
-import '@/global.css';
-
-import { Platform } from 'react-native';
-
 export const Colors = {
-  light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
-    accent: '#F2660F',
-    danger: '#DC3D43',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
-    accent: '#F2660F',
-    danger: '#E5484D',
-  },
+  /** Page background — warm near-black, not pure black. */
+  background: '#0C0A09',
+  /** Cards / rows / inputs. */
+  backgroundElement: '#1C1917',
+  /** Pressed state of the above. */
+  backgroundSelected: '#292524',
+  /** Hairline borders around cards, inputs, camera controls. */
+  border: '#2E2A25',
+  text: '#FAF7F2',
+  textSecondary: '#8F887F',
+  /** Acid green — develop timers, live indicators, primary buttons. */
+  accent: '#D4FF3F',
+  /** Text/icons sitting on top of an accent-filled surface. */
+  onAccent: '#15170A',
+  danger: '#FF4D3D',
 } as const;
 
-export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+export type ThemeColor = keyof typeof Colors;
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
-  },
-});
+/**
+ * Family names as registered by useFonts in the root layout.
+ * Custom fonts ship one file per weight — always pick the family,
+ * never set fontWeight alongside these (Android ignores it).
+ */
+export const Fonts = {
+  sans: 'SpaceGrotesk_500Medium',
+  sansSemiBold: 'SpaceGrotesk_600SemiBold',
+  sansBold: 'SpaceGrotesk_700Bold',
+  mono: 'SpaceMono_400Regular',
+  monoBold: 'SpaceMono_700Bold',
+} as const;
 
 export const Spacing = {
   half: 2,
@@ -65,5 +47,9 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+export const Radius = {
+  /** Cards, inputs, photo frames. */
+  card: 20,
+  /** Buttons. */
+  pill: 999,
+} as const;

@@ -1,6 +1,6 @@
 import { StyleSheet, TextInput, type TextInputProps } from 'react-native';
 
-import { Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export function AppTextInput({ style, ...rest }: TextInputProps) {
@@ -8,9 +8,14 @@ export function AppTextInput({ style, ...rest }: TextInputProps) {
   return (
     <TextInput
       placeholderTextColor={theme.textSecondary}
+      selectionColor={theme.accent}
       style={[
         styles.input,
-        { backgroundColor: theme.backgroundElement, color: theme.text },
+        {
+          backgroundColor: theme.backgroundElement,
+          borderColor: theme.border,
+          color: theme.text,
+        },
         style,
       ]}
       {...rest}
@@ -20,9 +25,11 @@ export function AppTextInput({ style, ...rest }: TextInputProps) {
 
 const styles = StyleSheet.create({
   input: {
-    minHeight: 48,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
+    minHeight: 50,
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.four - 4,
     fontSize: 16,
+    fontFamily: Fonts.sans,
   },
 });

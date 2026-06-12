@@ -1,24 +1,40 @@
+import { displayName } from '@/lib/names';
 import { supabase } from '@/lib/supabase';
 import type { Tables } from '@/types/database';
 
 export type Group = Tables<'groups'>;
 export type AppEvent = Tables<'events'>;
 export type Photo = Tables<'photos'>;
+export type Profile = Tables<'profiles'>;
 
-export type GroupWithCount = Group & { memberCount: number };
-export type Member = { user_id: string; role: string; username: string };
+export type GroupSummary = Group & {
+  memberNames: string[];
+  liveEvent: { id: string; name: string } | null;
+};
+export type Member = {
+  user_id: string;
+  role: string;
+  username: string;
+  first_name: string | null;
+  last_name: string | null;
+};
 export type PhotoWithAuthor = Photo & { username: string };
 export type ShotCount = { user_id: string; shots: number };
 
-export async function listGroups(): Promise<GroupWithCount[]> {
+export async function listGroups(): Promise<GroupSummary[]> {
   const { data, error } = await supabase
     .from('groups')
-    .select('*, group_members(count)')
-    .order('created_at', { ascending: false });
+    .select(
+      '*, group_members(joined_at, profiles(username, first_name, last_name)), events(id, name, status)'
+    )
+    .eq('events.status', 'active')
+    .order('created_at', { ascending: false })
+    .order('joined_at', { ascending: true, referencedTable: 'group_members' });
   if (error) throw error;
-  return data.map(({ group_members, ...group }) => ({
+  return data.map(({ group_members, events, ...group }) => ({
     ...group,
-    memberCount: group_members[0]?.count ?? 0,
+    memberNames: group_members.map((m) => displayName(m.profiles ?? {})),
+    liveEvent: events[0] ?? null,
   }));
 }
 
@@ -44,10 +60,36 @@ export async function getGroup(id: string): Promise<Group> {
   return data;
 }
 
+export async function getProfile(userId: string): Promise<Profile> {
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProfile(
+  userId: string,
+  patch: { username: string; first_name: string | null; last_name: string | null }
+): Promise<Profile> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(patch)
+    .eq('id', userId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** Permanently deletes the auth user and all their data (App Store 5.1.1(v)). */
+export async function deleteAccount(): Promise<void> {
+  const { error } = await supabase.rpc('delete_account');
+  if (error) throw error;
+}
+
 export async function listMembers(groupId: string): Promise<Member[]> {
   const { data, error } = await supabase
     .from('group_members')
-    .select('user_id, role, profiles(username)')
+    .select('user_id, role, profiles(username, first_name, last_name)')
     .eq('group_id', groupId)
     .order('joined_at');
   if (error) throw error;
@@ -55,6 +97,8 @@ export async function listMembers(groupId: string): Promise<Member[]> {
     user_id: m.user_id,
     role: m.role,
     username: m.profiles?.username ?? 'unknown',
+    first_name: m.profiles?.first_name ?? null,
+    last_name: m.profiles?.last_name ?? null,
   }));
 }
 
@@ -116,7 +160,6 @@ export async function signedPhotoUrls(paths: string[]): Promise<Map<string, stri
   const { data, error } = await supabase.storage.from('photos').createSignedUrls(paths, 60 * 60);
   if (error) throw error;
   const byPath = new Map<string, string>();
-  console.log(data)
   for (const entry of data) {
     if (entry.signedUrl && entry.path) byPath.set(entry.path, entry.signedUrl);
   }
