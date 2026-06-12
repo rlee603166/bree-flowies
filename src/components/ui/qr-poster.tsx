@@ -16,8 +16,8 @@ export function QrPoster({ code, size = 180 }: { code: string; size?: number }) 
         <QRCode
           value={inviteLink(code)}
           size={size}
-          color="#15130C"
-          backgroundColor="#FAF7F2"
+          color={Colors.posterInk}
+          backgroundColor={Colors.posterPaper}
         />
       </View>
       <ThemedText type="label" themeColor="textSecondary" style={styles.caption}>
@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   tile: {
-    backgroundColor: '#FAF7F2',
+    backgroundColor: Colors.posterPaper,
     padding: Spacing.three,
     borderRadius: Radius.card,
   },

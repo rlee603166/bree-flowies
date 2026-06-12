@@ -12,11 +12,11 @@ import { FilmStrip } from '@/components/ui/film-strip';
 import { Radius, Spacing } from '@/constants/theme';
 import { useKeyboardShift } from '@/hooks/use-keyboard-shift';
 import { useTheme } from '@/hooks/use-theme';
-import { createGroup, joinGroup, listGroups, type GroupSummary } from '@/lib/api';
+import { createGroup, listGroups, type GroupSummary } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
 import { onAnyEventChange } from '@/lib/realtime';
 
-type FormMode = 'none' | 'create' | 'join';
+type FormMode = 'none' | 'create';
 
 function GroupCard({ group, onPress }: { group: GroupSummary; onPress: () => void }) {
   const theme = useTheme();
@@ -37,9 +37,12 @@ function GroupCard({ group, onPress }: { group: GroupSummary; onPress: () => voi
         <View style={styles.groupCardText}>
           <ThemedText type="subtitle">{group.name}</ThemedText>
           <View style={styles.membersRow}>
-            <AvatarStack names={group.memberNames} size={24} />
+            <AvatarStack
+              people={group.members.map((m) => ({ name: m.name, uri: m.avatar_url }))}
+              size={24}
+            />
             <ThemedText type="label" themeColor="textSecondary">
-              {group.memberNames.length} {group.memberNames.length === 1 ? 'member' : 'members'}
+              {group.members.length} {group.members.length === 1 ? 'member' : 'members'}
             </ThemedText>
           </View>
         </View>
@@ -98,21 +101,13 @@ export default function GroupsScreen() {
     if (!formValue.trim()) return;
     setBusy(true);
     try {
-      if (formMode === 'create') {
-        const group = await createGroup(formValue, userId);
-        router.push({ pathname: '/group/[id]', params: { id: group.id } });
-      } else {
-        const groupId = await joinGroup(formValue);
-        router.push({ pathname: '/group/[id]', params: { id: groupId } });
-      }
+      const group = await createGroup(formValue, userId);
+      router.push({ pathname: '/group/[id]', params: { id: group.id } });
       setFormMode('none');
       setFormValue('');
       refresh();
     } catch (err) {
-      Alert.alert(
-        formMode === 'create' ? 'Could not create group' : 'Could not join group',
-        err instanceof Error ? err.message : undefined
-      );
+      Alert.alert('Could not create group', err instanceof Error ? err.message : undefined);
     } finally {
       setBusy(false);
     }
@@ -148,7 +143,7 @@ export default function GroupsScreen() {
                 no groups yet
               </ThemedText>
               <ThemedText type="code" themeColor="textSecondary" style={styles.emptyTitle}>
-                create one for your friends, or join with a code
+                create one for your friends, or scan a QR to join
               </ThemedText>
             </View>
           ) : null
@@ -174,18 +169,18 @@ export default function GroupsScreen() {
               onPress={() => setFormMode('create')}
             />
             <AppButton
-              title="join with a code"
+              title="⊡ scan to join"
               variant="secondary"
               style={styles.actionButton}
-              onPress={() => setFormMode('join')}
+              onPress={() => router.push('/scan')}
             />
           </View>
         ) : (
           <View style={styles.formColumn}>
             <AppTextInput
-              placeholder={formMode === 'create' ? 'group name' : 'join code'}
+              placeholder="group name"
               autoFocus
-              autoCapitalize={formMode === 'join' ? 'characters' : 'sentences'}
+              autoCapitalize="sentences"
               autoCorrect={false}
               value={formValue}
               onChangeText={setFormValue}
@@ -193,7 +188,7 @@ export default function GroupsScreen() {
             />
             <View style={styles.actionRow}>
               <AppButton
-                title={formMode === 'create' ? 'create' : 'join'}
+                title="create"
                 loading={busy}
                 disabled={!formValue.trim()}
                 style={styles.actionButton}
@@ -201,16 +196,6 @@ export default function GroupsScreen() {
               />
               <AppButton title="cancel" variant="secondary" style={styles.actionButton} onPress={closeForm} />
             </View>
-            {formMode === 'join' && (
-              <AppButton
-                title="⊡ scan a QR code instead"
-                variant="secondary"
-                onPress={() => {
-                  closeForm();
-                  router.push('/scan');
-                }}
-              />
-            )}
           </View>
         )}
       </Animated.View>

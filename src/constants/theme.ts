@@ -1,28 +1,27 @@
 /**
- * "Film lab" theme — the app is dark-only by design (a darkroom).
- * Warm near-blacks, one loud acid-green accent, mono type for anything
- * that reads like camera hardware (counters, codes, timers, labels).
+ * The app is dark-only by design (a darkroom). The full color scheme lives in
+ * one swappable palette — change `ACTIVE` below to recolor the entire app
+ * (reload required; this is a design-time switch, not an in-app toggle).
+ * Add new schemes under `palettes/` and register them in `palettes` here.
+ *
+ * Mono type is still used for anything that reads like camera hardware
+ * (counters, codes, timers, labels) — see `Fonts` below.
  */
+import { filmLab } from './palettes/film-lab';
+import type { Palette } from './palettes/types';
+import { warmSocial } from './palettes/warm-social';
 
-export const Colors = {
-  /** Page background — warm near-black, not pure black. */
-  background: '#0C0A09',
-  /** Cards / rows / inputs. */
-  backgroundElement: '#1C1917',
-  /** Pressed state of the above. */
-  backgroundSelected: '#292524',
-  /** Hairline borders around cards, inputs, camera controls. */
-  border: '#2E2A25',
-  text: '#FAF7F2',
-  textSecondary: '#8F887F',
-  /** Acid green — develop timers, live indicators, primary buttons. */
-  accent: '#D4FF3F',
-  /** Text/icons sitting on top of an accent-filled surface. */
-  onAccent: '#15170A',
-  danger: '#FF4D3D',
-} as const;
+const palettes = { filmLab, warmSocial } satisfies Record<string, Palette>;
 
-export type ThemeColor = keyof typeof Colors;
+/** ← Swap this one value to play with different color schemes. */
+const ACTIVE: keyof typeof palettes = 'filmLab';
+
+export const Colors: Palette = palettes[ACTIVE];
+
+/** Single-color tokens only — excludes list-valued tokens like `avatarTones`. */
+export type ThemeColor = {
+  [K in keyof Palette]: Palette[K] extends string ? K : never;
+}[keyof Palette];
 
 /**
  * Family names as registered by useFonts in the root layout.

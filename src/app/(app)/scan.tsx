@@ -81,7 +81,7 @@ const CORNER = 28;
 const styles = StyleSheet.create({
   body: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: Colors.photoBackdrop,
   },
   overlay: {
     flex: 1,

@@ -1,12 +1,14 @@
+import { forwardRef } from 'react';
 import { StyleSheet, TextInput, type TextInputProps } from 'react-native';
 
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export function AppTextInput({ style, ...rest }: TextInputProps) {
+export const AppTextInput = forwardRef<TextInput, TextInputProps>(({ style, ...rest }, ref) => {
   const theme = useTheme();
   return (
     <TextInput
+      ref={ref}
       placeholderTextColor={theme.textSecondary}
       selectionColor={theme.accent}
       style={[
@@ -21,7 +23,9 @@ export function AppTextInput({ style, ...rest }: TextInputProps) {
       {...rest}
     />
   );
-}
+});
+
+AppTextInput.displayName = 'AppTextInput';
 
 const styles = StyleSheet.create({
   input: {

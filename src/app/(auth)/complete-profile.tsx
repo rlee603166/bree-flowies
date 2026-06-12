@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { AppButton } from '@/components/ui/app-button';
 import { AppTextInput } from '@/components/ui/app-text-input';
+import { AvatarPicker } from '@/components/ui/avatar-picker';
 import { Spacing } from '@/constants/theme';
 import { useKeyboardShift } from '@/hooks/use-keyboard-shift';
 import { useAuth } from '@/lib/auth-context';
@@ -17,6 +18,7 @@ export default function CompleteProfileScreen() {
   const router = useRouter();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const keyboardShift = useKeyboardShift();
@@ -28,7 +30,7 @@ export default function CompleteProfileScreen() {
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ first_name: firstName.trim(), last_name: lastName.trim() })
+        .update({ first_name: firstName.trim(), last_name: lastName.trim(), avatar_url: avatarUrl })
         .eq('id', session.user.id);
       if (error) throw error;
       await refreshProfile();
@@ -61,6 +63,18 @@ export default function CompleteProfileScreen() {
               one last thing — what&apos;s your name?
             </ThemedText>
           </View>
+
+          {session && (
+            <View style={styles.avatarRow}>
+              <AvatarPicker
+                userId={session.user.id}
+                name={firstName.trim() || '?'}
+                avatarUrl={avatarUrl}
+                onChange={setAvatarUrl}
+                size={88}
+              />
+            </View>
+          )}
 
           <AppTextInput
             placeholder="first name"
@@ -124,5 +138,9 @@ const styles = StyleSheet.create({
   },
   message: {
     textAlign: 'center',
+  },
+  avatarRow: {
+    alignItems: 'center',
+    marginBottom: Spacing.two,
   },
 });

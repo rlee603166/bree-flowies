@@ -1,48 +1,54 @@
+import { Image, type ImageStyle } from 'expo-image';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { Colors, Fonts } from '@/constants/theme';
 
-/** Muted film-stock tones — readable against the dark background. */
-const TONES = ['#E8C170', '#A3B18A', '#C97B63', '#7FA8C9', '#B08BBB', '#D4A5A5'];
-
 function toneFor(name: string) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return TONES[Math.abs(hash) % TONES.length];
+  return Colors.avatarTones[Math.abs(hash) % Colors.avatarTones.length];
 }
 
 type AvatarProps = {
   name: string;
+  /** When set, the picture is shown instead of the initial. */
+  uri?: string | null;
   size?: number;
   style?: ViewStyle;
 };
 
-export function Avatar({ name, size = 34, style }: AvatarProps) {
+export function Avatar({ name, uri, size = 34, style }: AvatarProps) {
+  const dimensions = { width: size, height: size, borderRadius: size / 2 };
+
+  if (uri) {
+    return (
+      <Image
+        source={{ uri }}
+        style={[styles.circle, dimensions, style as ImageStyle]}
+        contentFit="cover"
+        recyclingKey={uri}
+        transition={150}
+      />
+    );
+  }
+
   return (
-    <View
-      style={[
-        styles.circle,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: toneFor(name),
-        },
-        style,
-      ]}
-    >
+    <View style={[styles.circle, dimensions, { backgroundColor: toneFor(name) }, style]}>
       <Text style={[styles.initial, { fontSize: size * 0.42 }]}>{name.charAt(0)}</Text>
     </View>
   );
 }
 
-export function AvatarStack({ names, size = 34 }: { names: string[]; size?: number }) {
+export type AvatarFace = { name: string; uri?: string | null };
+
+export function AvatarStack({ people, size = 34 }: { people: AvatarFace[]; size?: number }) {
   return (
     <View style={styles.stack}>
-      {names.map((name, i) => (
+      {people.map((person, i) => (
         <Avatar
-          key={`${name}-${i}`}
-          name={name}
+          key={`${person.name}-${i}`}
+          name={person.name}
+          uri={person.uri}
           size={size}
           style={i > 0 ? { marginLeft: -size / 3 } : undefined}
         />
@@ -60,7 +66,7 @@ const styles = StyleSheet.create({
   },
   initial: {
     fontFamily: Fonts.sansBold,
-    color: '#15130C',
+    color: Colors.onAvatarTone,
     textTransform: 'lowercase',
   },
   stack: {

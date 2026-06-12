@@ -1,15 +1,19 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { AppButton } from '@/components/ui/app-button';
-import { AppTextInput } from '@/components/ui/app-text-input';
-import { AvatarStack } from '@/components/ui/avatar';
+import { Avatar, AvatarStack } from '@/components/ui/avatar';
+import { FabMenu, type FabAction } from '@/components/ui/fab-menu';
 import { FilmStrip } from '@/components/ui/film-strip';
+import { InviteSheet } from '@/components/ui/invite-sheet';
+import { NewEventSheet } from '@/components/ui/new-event-sheet';
 import { PeopleSheet } from '@/components/ui/people-sheet';
-import { QrPoster } from '@/components/ui/qr-poster';
+import { PHOTO_COLUMNS, PHOTO_GRID_GAP, PhotoCell, photoCellSize } from '@/components/ui/photo-cell';
+import { PhotoViewer } from '@/components/ui/photo-viewer';
+import { SwipeTabs } from '@/components/ui/swipe-tabs';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -17,34 +21,41 @@ import {
   endEvent,
   getGroup,
   listEvents,
+  listGroupPhotos,
   listMembers,
   shotCounts,
+  signedPhotoUrls,
   type AppEvent,
   type Group,
   type Member,
+  type PhotoWithAuthor,
   type ShotCount,
 } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
 import { eventPhase, formatDevelopTime, formatEventDate } from '@/lib/event-state';
-import { inviteLink } from '@/lib/invite';
 import { onGroupActivity, type ShotEvent } from '@/lib/realtime';
 import { displayName } from '@/lib/names';
+
+type GroupPhoto = PhotoWithAuthor & { url: string | null };
 
 export default function GroupScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const theme = useTheme();
   const userId = useUserId();
+  const { width } = useWindowDimensions();
 
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [counts, setCounts] = useState<ShotCount[]>([]);
+  const [photos, setPhotos] = useState<GroupPhoto[]>([]);
+  const [photosLoaded, setPhotosLoaded] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [eventName, setEventName] = useState('');
-  const [creatingEvent, setCreatingEvent] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [peopleOpen, setPeopleOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [newEventOpen, setNewEventOpen] = useState(false);
 
   const activeEvent = useMemo(() => events.find((e) => e.status === 'active') ?? null, [events]);
   const pastEvents = useMemo(() => events.filter((e) => e.status !== 'active'), [events]);
@@ -67,6 +78,37 @@ export default function GroupScreen() {
       setRefreshing(false);
     }
   }, [id]);
+
+  // The whole-group gallery. Signed URLs are pricey for a big group, so this is
+  // only fetched once the "all pictures" tab is first seen (and on pull-down).
+  // RLS already limits the rows to developed events.
+  const loadPhotos = useCallback(async () => {
+    try {
+      const rows = await listGroupPhotos(id);
+      setPhotos((prev) => {
+        const prevUrls = new Map(prev.map((p) => [p.id, p.url]));
+        return rows.map((p) => ({ ...p, url: prevUrls.get(p.id) ?? null }));
+      });
+      const urls = await signedPhotoUrls(rows.map((p) => p.storage_path));
+      setPhotos(
+        rows.flatMap((p) => {
+          const url = urls.get(p.storage_path);
+          return url ? [{ ...p, url }] : [];
+        })
+      );
+    } catch (err) {
+      Alert.alert('Could not load photos', err instanceof Error ? err.message : undefined);
+    } finally {
+      setPhotosLoaded(true);
+    }
+  }, [id]);
+
+  const handleTabChange = useCallback(
+    (index: number) => {
+      if (index === 1 && !photosLoaded) loadPhotos();
+    },
+    [photosLoaded, loadPhotos]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -101,15 +143,6 @@ export default function GroupScreen() {
     [id, refresh, handleShot]
   );
 
-  const shareCode = () => {
-    if (!group) return;
-    Share.share({
-      message: `Join "${group.name}" on bree flowies — scan the QR, open ${inviteLink(
-        group.join_code
-      )}, or use code ${group.join_code}`,
-    });
-  };
-
   const eventHostName = useMemo(() => {
     if (!activeEvent) return null;
     if (activeEvent.created_by === userId) return 'you';
@@ -117,20 +150,28 @@ export default function GroupScreen() {
     return host ? displayName(host) : null;
   }, [activeEvent, members, userId]);
 
-  const startEvent = async () => {
-    if (!eventName.trim()) return;
-    setBusy(true);
+  // Rejects on failure so the sheet stays open for a retry; resolves on success
+  // after closing the sheet and pulling the new active event in.
+  const handleCreateEvent = async (name: string) => {
     try {
-      await createEvent(id, eventName, userId);
-      setEventName('');
-      setCreatingEvent(false);
+      await createEvent(id, name, userId);
+      setNewEventOpen(false);
       refresh();
     } catch (err) {
       Alert.alert('Could not start event', err instanceof Error ? err.message : undefined);
-    } finally {
-      setBusy(false);
+      throw err;
     }
   };
+
+  // One active event per group, so only offer "new event" when none is live.
+  const fabActions = useMemo<FabAction[]>(() => {
+    const actions: FabAction[] = [];
+    if (!activeEvent && events.length > 0) {
+      actions.push({ key: 'new', label: '＋ new event', onPress: () => setNewEventOpen(true) });
+    }
+    actions.push({ key: 'invite', label: '↗ invite others', onPress: () => setInviteOpen(true) });
+    return actions;
+  }, [activeEvent, events.length]);
 
   const confirmEndEvent = () => {
     if (!activeEvent) return;
@@ -152,37 +193,21 @@ export default function GroupScreen() {
     ]);
   };
 
+  // Fixed metadata above the tabs: roster + the live roll, if any.
   const header = (
-    <View style={styles.headerContent}>
-      {group && (
-        <Pressable
-          onPress={shareCode}
-          style={[styles.codeCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-        >
-          <View style={styles.codeCardTop}>
-            <ThemedText type="label" themeColor="textSecondary">
-              invite
-            </ThemedText>
-            <ThemedText type="label" themeColor="accent">
-              share ↗
-            </ThemedText>
-          </View>
-          <QrPoster code={group.join_code} />
-        </Pressable>
-      )}
-
+    <View style={styles.header}>
       <Pressable
         onPress={() => members.length > 0 && setPeopleOpen(true)}
         style={styles.membersRow}
         hitSlop={8}
       >
-        <AvatarStack names={members.map((m) => displayName(m))} />
+        <AvatarStack people={members.map((m) => ({ name: displayName(m), uri: m.avatar_url }))} />
         <ThemedText type="label" themeColor="textSecondary">
           {members.length} in the group ›
         </ThemedText>
       </Pressable>
 
-      {activeEvent ? (
+      {activeEvent && (
         <View
           style={[
             styles.activeCard,
@@ -206,6 +231,7 @@ export default function GroupScreen() {
                   key={m.user_id}
                   style={[styles.shotChip, { backgroundColor: theme.backgroundSelected }]}
                 >
+                  <Avatar name={displayName(m)} uri={m.avatar_url} size={18} />
                   <ThemedText type="code" themeColor="textSecondary">
                     {displayName(m)}{' '}
                     <ThemedText type="code" themeColor="text">
@@ -230,78 +256,121 @@ export default function GroupScreen() {
             </Pressable>
           )}
         </View>
-      ) : creatingEvent ? (
-        <View style={styles.newEventForm}>
-          <AppTextInput
-            placeholder="what's happening tonight?"
-            autoFocus
-            value={eventName}
-            onChangeText={setEventName}
-            onSubmitEditing={startEvent}
-          />
-          <AppButton title="start shooting" loading={busy} disabled={!eventName.trim()} onPress={startEvent} />
-          <AppButton title="cancel" variant="secondary" onPress={() => setCreatingEvent(false)} />
-        </View>
-      ) : (
-        <AppButton title="＋ new event" onPress={() => setCreatingEvent(true)} />
-      )}
-
-      {pastEvents.length > 0 && (
-        <ThemedText type="label" themeColor="textSecondary" style={styles.pastLabel}>
-          past events
-        </ThemedText>
       )}
     </View>
+  );
+
+  const eventsTab = (
+    <FlatList
+      data={pastEvents}
+      keyExtractor={(e) => e.id}
+      contentContainerStyle={styles.tabContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+      renderItem={({ item }) => {
+        const phase = eventPhase(item);
+        return (
+          <Pressable
+            onPress={() => router.push({ pathname: '/album/[eventId]', params: { eventId: item.id } })}
+            style={({ pressed }) => [
+              styles.eventRow,
+              {
+                backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <FilmStrip direction="column" count={4} holeSize={4} style={styles.eventPerforation} />
+            <View style={styles.eventRowText}>
+              <ThemedText>{item.name}</ThemedText>
+              <ThemedText type="code" themeColor="textSecondary">
+                {formatEventDate(item.started_at)}
+              </ThemedText>
+              {phase === 'developing' && (
+                <ThemedText type="label" style={{ color: theme.accent }}>
+                  developing · ready {formatDevelopTime(item.develops_at)}
+                </ThemedText>
+              )}
+            </View>
+            <ThemedText themeColor="textSecondary">{phase === 'developing' ? '🎞️' : '›'}</ThemedText>
+          </Pressable>
+        );
+      }}
+      ListEmptyComponent={
+        events.length === 0 ? (
+          <View style={styles.empty}>
+            <ThemedText type="subtitle">no events yet</ThemedText>
+            <ThemedText type="label" themeColor="textSecondary" style={styles.emptyText}>
+              start a roll and everyone can shoot into it.
+            </ThemedText>
+            <AppButton title="＋ new event" onPress={() => setNewEventOpen(true)} />
+          </View>
+        ) : (
+          <View style={styles.empty}>
+            <ThemedText themeColor="textSecondary">no past events yet</ThemedText>
+          </View>
+        )
+      }
+    />
+  );
+
+  const picturesTab = (
+    <FlatList
+      data={photos}
+      keyExtractor={(p) => p.id}
+      numColumns={PHOTO_COLUMNS}
+      columnWrapperStyle={{ gap: PHOTO_GRID_GAP }}
+      contentContainerStyle={styles.gridContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadPhotos} />}
+      renderItem={({ item, index }) => (
+        <PhotoCell
+          id={item.id}
+          url={item.url}
+          size={photoCellSize(width)}
+          onPress={() => setViewerIndex(index)}
+        />
+      )}
+      ListEmptyComponent={
+        <View style={styles.empty}>
+          <ThemedText themeColor="textSecondary">
+            {photosLoaded ? 'no developed photos yet 🎞️' : 'loading…'}
+          </ThemedText>
+        </View>
+      }
+    />
   );
 
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ title: group?.name ?? '' }} />
-      <FlatList
-        data={pastEvents}
-        keyExtractor={(e) => e.id}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        ListHeaderComponent={header}
-        renderItem={({ item }) => {
-          const phase = eventPhase(item);
-          return (
-            <Pressable
-              onPress={() =>
-                router.push({ pathname: '/album/[eventId]', params: { eventId: item.id } })
-              }
-              style={({ pressed }) => [
-                styles.eventRow,
-                {
-                  backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
-                  borderColor: theme.border,
-                },
-              ]}
-            >
-              <FilmStrip direction="column" count={4} holeSize={4} style={styles.eventPerforation} />
-              <View style={styles.eventRowText}>
-                <ThemedText>{item.name}</ThemedText>
-                <ThemedText type="code" themeColor="textSecondary">
-                  {formatEventDate(item.started_at)}
-                </ThemedText>
-                {phase === 'developing' && (
-                  <ThemedText type="label" style={{ color: theme.accent }}>
-                    developing · ready {formatDevelopTime(item.develops_at)}
-                  </ThemedText>
-                )}
-              </View>
-              <ThemedText themeColor="textSecondary">{phase === 'developing' ? '🎞️' : '›'}</ThemedText>
-            </Pressable>
-          );
-        }}
+      {header}
+      <SwipeTabs
+        onIndexChange={handleTabChange}
+        tabs={[
+          { key: 'events', label: 'events', content: eventsTab },
+          { key: 'pictures', label: 'all pictures', content: picturesTab },
+        ]}
       />
+      {fabActions.length > 0 && <FabMenu actions={fabActions} />}
+      <PhotoViewer photos={photos} index={viewerIndex} onClose={() => setViewerIndex(null)} />
       <PeopleSheet
         visible={peopleOpen}
         onClose={() => setPeopleOpen(false)}
         members={members}
         hostUserId={group?.created_by ?? null}
         currentUserId={userId}
+      />
+      {group && (
+        <InviteSheet
+          visible={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          groupName={group.name}
+          code={group.join_code}
+        />
+      )}
+      <NewEventSheet
+        visible={newEventOpen}
+        onClose={() => setNewEventOpen(false)}
+        onCreate={handleCreateEvent}
       />
     </ThemedView>
   );
@@ -311,24 +380,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  listContent: {
+  header: {
     padding: Spacing.three,
+    gap: Spacing.three,
+  },
+  tabContent: {
+    padding: Spacing.three,
+    paddingBottom: Spacing.six + Spacing.five,
     gap: Spacing.two,
+    flexGrow: 1,
   },
-  headerContent: {
-    gap: Spacing.three,
-    marginBottom: Spacing.two,
+  gridContent: {
+    gap: PHOTO_GRID_GAP,
+    paddingBottom: Spacing.six + Spacing.five,
+    flexGrow: 1,
   },
-  codeCard: {
-    borderRadius: Radius.card,
-    borderWidth: 1,
-    padding: Spacing.three,
-    gap: Spacing.three,
-  },
-  codeCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  empty: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.three,
+    padding: Spacing.five,
+  },
+  emptyText: {
+    textAlign: 'center',
   },
   membersRow: {
     flexDirection: 'row',
@@ -347,19 +422,17 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   shotChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one + 2,
     borderRadius: Radius.pill,
-    paddingHorizontal: Spacing.three - 4,
-    paddingVertical: Spacing.one + 2,
+    paddingLeft: Spacing.one,
+    paddingRight: Spacing.three - 4,
+    paddingVertical: Spacing.one,
   },
   endEvent: {
     alignSelf: 'center',
     padding: Spacing.one,
-  },
-  newEventForm: {
-    gap: Spacing.two,
-  },
-  pastLabel: {
-    marginTop: Spacing.two,
   },
   eventRow: {
     flexDirection: 'row',

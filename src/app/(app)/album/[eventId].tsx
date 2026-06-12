@@ -1,19 +1,20 @@
-import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, FlatList, StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FilmStrip } from '@/components/ui/film-strip';
-import { Skeleton } from '@/components/ui/skeleton';
+import {
+  PHOTO_COLUMNS,
+  PHOTO_GRID_GAP,
+  PhotoCell,
+  photoCellSize,
+} from '@/components/ui/photo-cell';
+import { PhotoViewer } from '@/components/ui/photo-viewer';
 import { Colors, Fonts, Spacing } from '@/constants/theme';
 import { getEvent, listPhotos, signedPhotoUrls, type AppEvent, type PhotoWithAuthor } from '@/lib/api';
 import { eventPhase, formatDevelopTime, formatEventDate } from '@/lib/event-state';
-
-const GRID_GAP = 2;
-const COLUMNS = 3;
 
 type AlbumPhoto = PhotoWithAuthor & { url: string | null };
 
@@ -70,7 +71,7 @@ export default function AlbumScreen() {
     }, [load])
   );
 
-  const cellSize = (width - GRID_GAP * (COLUMNS - 1)) / COLUMNS;
+  const cellSize = photoCellSize(width);
   const phase = event ? eventPhase(event) : null;
 
   // Live countdown while the roll develops; flips to the album once it hits zero.
@@ -122,15 +123,14 @@ export default function AlbumScreen() {
       )}
 
       {phase === 'developed' && (
-        <SafeAreaView edges={['top']} style={{ flex: 1 }}>
-          <FlatList
-            data={photos}
-            keyExtractor={(p) => p.id}
-            numColumns={COLUMNS}
-            contentInsetAdjustmentBehavior="automatic"
-            columnWrapperStyle={{ gap: GRID_GAP }}
-            contentContainerStyle={{ gap: GRID_GAP }}
-            ListHeaderComponent={
+        <FlatList
+          data={photos}
+          keyExtractor={(p) => p.id}
+          numColumns={PHOTO_COLUMNS}
+          contentInsetAdjustmentBehavior="automatic"
+          columnWrapperStyle={{ gap: PHOTO_GRID_GAP }}
+          contentContainerStyle={{ gap: PHOTO_GRID_GAP }}
+          ListHeaderComponent={
             photos.length > 0 ? (
               <View style={styles.rollHeader}>
                 <FilmStrip count={10} />
@@ -143,7 +143,7 @@ export default function AlbumScreen() {
             ) : null
           }
           renderItem={({ item, index }) => (
-            <PhotoCell photo={item} size={cellSize} onPress={() => setViewerIndex(index)} />
+            <PhotoCell id={item.id} url={item.url} size={cellSize} onPress={() => setViewerIndex(index)} />
           )}
           ListEmptyComponent={
             loaded ? (
@@ -152,78 +152,11 @@ export default function AlbumScreen() {
               </View>
             ) : null
           }
-          />
-        </SafeAreaView>
+        />
       )}
 
-      <Modal
-        visible={viewerIndex !== null}
-        animationType="fade"
-        onRequestClose={() => setViewerIndex(null)}
-      >
-        <View style={styles.viewer}>
-          <SafeAreaView edges={['top']} style={styles.viewerHeader}>
-            <Pressable onPress={() => setViewerIndex(null)} hitSlop={12} style={styles.viewerClose}>
-              <ThemedText style={styles.viewerCloseText}>✕</ThemedText>
-            </Pressable>
-          </SafeAreaView>
-          <FlatList
-            data={photos}
-            keyExtractor={(p) => p.id}
-            horizontal
-            pagingEnabled
-            initialScrollIndex={viewerIndex ?? 0}
-            getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item, index }) => (
-              <View style={[styles.viewerPage, { width }]}>
-                <Image
-                  source={item.url ? { uri: item.url } : undefined}
-                  style={styles.viewerImage}
-                  contentFit="contain"
-                />
-                <ThemedText type="code" style={styles.viewerCaption}>
-                  frame {pad2(index + 1)}/{pad2(photos.length)} · {item.username} ·{' '}
-                  {new Date(item.taken_at).toLocaleTimeString(undefined, {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
-                </ThemedText>
-              </View>
-            )}
-          />
-        </View>
-      </Modal>
+      <PhotoViewer photos={photos} index={viewerIndex} onClose={() => setViewerIndex(null)} />
     </ThemedView>
-  );
-}
-
-function PhotoCell({
-  photo,
-  size,
-  onPress,
-}: {
-  photo: AlbumPhoto;
-  size: number;
-  onPress: () => void;
-}) {
-  const [imageLoaded, setImageLoaded] = useState(false);
-  return (
-    <Pressable onPress={onPress} disabled={!photo.url}>
-      <View style={{ width: size, height: size, backgroundColor: Colors.backgroundElement }}>
-        {!imageLoaded && <Skeleton style={StyleSheet.absoluteFill} />}
-        {photo.url && (
-          <Image
-            source={{ uri: photo.url }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            recyclingKey={photo.id}
-            transition={150}
-            onLoad={() => setImageLoaded(true)}
-          />
-        )}
-      </View>
-    </Pressable>
   );
 }
 
@@ -268,35 +201,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     paddingVertical: Spacing.three,
-  },
-  viewer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  viewerPage: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  viewerImage: {
-    width: '100%',
-    height: '80%',
-  },
-  viewerCaption: {
-    color: Colors.textSecondary,
-    marginTop: Spacing.three,
-  },
-  viewerHeader: {
-    backgroundColor: '#000',
-  },
-  viewerClose: {
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    alignSelf: 'flex-start',
-  },
-  viewerCloseText: {
-    color: '#fff',
-    fontSize: 22,
-    padding: Spacing.two,
   },
 });

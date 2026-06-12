@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { AppButton } from '@/components/ui/app-button';
 import { AppTextInput } from '@/components/ui/app-text-input';
-import { Avatar } from '@/components/ui/avatar';
+import { AvatarPicker } from '@/components/ui/avatar-picker';
 import { FilmStrip } from '@/components/ui/film-strip';
 import { Spacing } from '@/constants/theme';
 import { deleteAccount, getProfile, updateProfile, type Profile } from '@/lib/api';
@@ -19,6 +19,7 @@ export default function SettingsScreen() {
   const [username, setUsername] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -29,6 +30,7 @@ export default function SettingsScreen() {
         setUsername(profile.username);
         setFirstName(profile.first_name ?? '');
         setLastName(profile.last_name ?? '');
+        setAvatarUrl(profile.avatar_url);
       })
       .catch((err) =>
         Alert.alert('Could not load profile', err instanceof Error ? err.message : undefined)
@@ -40,6 +42,19 @@ export default function SettingsScreen() {
     (username.trim() !== saved.username ||
       firstName.trim() !== (saved.first_name ?? '') ||
       lastName.trim() !== (saved.last_name ?? ''));
+
+  // The picker has already uploaded the file; persist the new URL right away
+  // (separate from the name/username "save changes" flow).
+  const changeAvatar = async (url: string | null) => {
+    setAvatarUrl(url);
+    try {
+      const updated = await updateProfile(userId, { avatar_url: url });
+      setSaved(updated);
+    } catch (err) {
+      Alert.alert('Could not update picture', err instanceof Error ? err.message : undefined);
+      setAvatarUrl(saved?.avatar_url ?? null);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -93,7 +108,13 @@ export default function SettingsScreen() {
         automaticallyAdjustKeyboardInsets
       >
         <View style={styles.avatarRow}>
-          <Avatar name={username.trim() || '?'} size={64} />
+          <AvatarPicker
+            userId={userId}
+            name={username.trim() || '?'}
+            avatarUrl={avatarUrl}
+            onChange={changeAvatar}
+            size={96}
+          />
         </View>
 
         <ThemedText type="label" themeColor="textSecondary">

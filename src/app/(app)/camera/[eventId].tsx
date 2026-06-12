@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '@/components/ui/app-button';
 import { FilmStrip } from '@/components/ui/film-strip';
-import { Colors, Fonts, Spacing } from '@/constants/theme';
+import { Colors, Fonts, Radius, Spacing } from '@/constants/theme';
 import { getEvent, shotCounts } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
 import { createFakePhotoBytes } from '@/lib/fake-photo';
@@ -100,11 +100,12 @@ export default function CameraScreen() {
   const needsPermission = !FAKE_CAMERA && (!permission || !permission.granted);
   const shutterDisabled = needsPermission || rollClosed;
   const totalShots = priorShots + sessionShots;
+  const flashOn = flash === 'on';
 
   return (
     <View style={[styles.body, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.safeArea}>
-        {/* top controls */}
+        {/* top controls — sit above the camera body */}
         <View style={styles.topRow}>
           <Pressable onPress={() => router.back()} hitSlop={12} style={styles.control}>
             <Text style={styles.controlText}>✕</Text>
@@ -112,11 +113,11 @@ export default function CameraScreen() {
           <Text style={styles.brand}>bree flowies</Text>
           <View style={styles.topRight}>
             <Pressable
-              onPress={() => setFlash(flash === 'off' ? 'on' : 'off')}
+              onPress={() => setFlash(flashOn ? 'off' : 'on')}
               hitSlop={12}
-              style={[styles.control, flash === 'on' && styles.controlActive]}
+              style={[styles.control, flashOn && styles.controlActive]}
             >
-              <Text style={[styles.controlText, flash === 'on' && { color: Colors.onAccent }]}>⚡︎</Text>
+              <Text style={[styles.controlText, flashOn && { color: Colors.onAccent }]}>⚡︎</Text>
             </Pressable>
             <Pressable
               onPress={() => setFacing(facing === 'back' ? 'front' : 'back')}
@@ -128,76 +129,108 @@ export default function CameraScreen() {
           </View>
         </View>
 
-        {/* tiny dispo viewfinder — deliberately too small to compose with */}
-        <View style={styles.viewfinderRow}>
-          <View style={styles.viewfinder}>
-            {needsPermission ? (
-              <View style={styles.viewfinderFallback}>
-                <Text style={styles.fallbackText}>no access</Text>
+        {/* the molded camera body — everything hardware-ish lives inside this shell */}
+        <View style={styles.shell}>
+          {/* top cluster: printed labels (left), finder + wind-wheel (right) */}
+          <View style={styles.cluster}>
+            <View style={styles.printStack}>
+              <Text style={styles.printLarge}>FILM 400</Text>
+              <Text style={styles.print}>ISO ▢▢▢</Text>
+              <Text style={styles.print}>35mm</Text>
+            </View>
+
+            <View style={styles.finderWheel}>
+              {/* tiny dispo viewfinder — deliberately too small to compose with */}
+              <View style={styles.viewfinder}>
+                {needsPermission ? (
+                  <View style={styles.viewfinderFallback}>
+                    <Text style={styles.fallbackText}>no access</Text>
+                  </View>
+                ) : FAKE_CAMERA ? (
+                  <View style={styles.viewfinderFallback}>
+                    <Text style={styles.fallbackText}>simulator</Text>
+                  </View>
+                ) : (
+                  <CameraView
+                    ref={cameraRef}
+                    style={StyleSheet.absoluteFill}
+                    facing={facing}
+                    flash={flash}
+                    onCameraReady={() => setCameraReady(true)}
+                  />
+                )}
+                <View pointerEvents="none" style={styles.viewfinderOverlay}>
+                  <View style={[styles.corner, styles.cornerTL]} />
+                  <View style={[styles.corner, styles.cornerTR]} />
+                  <View style={[styles.corner, styles.cornerBL]} />
+                  <View style={[styles.corner, styles.cornerBR]} />
+                  <View style={styles.crosshairH} />
+                  <View style={styles.crosshairV} />
+                </View>
               </View>
-            ) : FAKE_CAMERA ? (
-              <View style={styles.viewfinderFallback}>
-                <Text style={styles.fallbackText}>simulator</Text>
+
+              {/* film-advance thumb wheel — ridged plastic */}
+              <View style={styles.wheelColumn}>
+                <View style={styles.wheel}>
+                  {Array.from({ length: 5 }, (_, i) => (
+                    <View key={i} style={styles.wheelRidge} />
+                  ))}
+                </View>
+                <Text style={styles.wheelLabel}>WIND</Text>
               </View>
-            ) : (
-              <CameraView
-                ref={cameraRef}
-                style={StyleSheet.absoluteFill}
-                facing={facing}
-                flash={flash}
-                onCameraReady={() => setCameraReady(true)}
-              />
-            )}
-            <View pointerEvents="none" style={styles.viewfinderOverlay}>
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
-              <View style={styles.crosshairH} />
-              <View style={styles.crosshairV} />
             </View>
           </View>
-        </View>
 
-        {permission && !permission.granted && !FAKE_CAMERA && (
-          <View style={styles.permissionBox}>
-            <Text style={styles.fallbackText}>
-              {permission.canAskAgain
-                ? 'bree flowies needs the camera to shoot'
-                : 'enable camera access in Settings'}
-            </Text>
-            {permission.canAskAgain && (
-              <AppButton title="allow camera" onPress={requestPermission} />
-            )}
+          {permission && !permission.granted && !FAKE_CAMERA && (
+            <View style={styles.permissionBox}>
+              <Text style={styles.fallbackText}>
+                {permission.canAskAgain
+                  ? 'bree flowies needs the camera to shoot'
+                  : 'enable camera access in Settings'}
+              </Text>
+              {permission.canAskAgain && (
+                <AppButton title="allow camera" onPress={requestPermission} />
+              )}
+            </View>
+          )}
+
+          {/* recessed frame-counter window */}
+          <View style={styles.counterArea}>
+            <View style={styles.counterPlate}>
+              <FilmStrip count={4} color={TRIM} />
+              <View style={styles.counterWindow}>
+                <Text style={styles.counterText}>{String(totalShots).padStart(2, '0')}</Text>
+              </View>
+              <FilmStrip count={4} color={TRIM} />
+            </View>
+            <Text style={styles.counterLabel}>shots on your roll</Text>
           </View>
-        )}
 
-        {/* film counter */}
-        <View style={styles.counterRow}>
-          <FilmStrip count={6} color={TRIM} />
-          <View style={styles.counterWindow}>
-            <Text style={styles.counterText}>{String(totalShots).padStart(2, '0')}</Text>
+          {/* bottom deck: flash-ready light, shutter, printed stamp */}
+          <View style={styles.deck}>
+            <View style={styles.readyRow}>
+              <View style={[styles.readyDot, flashOn && styles.readyDotOn]} />
+              <Text style={styles.readyText}>{flashOn ? 'flash ready' : 'flash off'}</Text>
+            </View>
+
+            <Pressable
+              onPress={snap}
+              disabled={shutterDisabled}
+              style={({ pressed }) => [
+                styles.shutterOuter,
+                pressed && styles.shutterPressed,
+                shutterDisabled && styles.shutterDisabled,
+              ]}
+            >
+              <View style={styles.shutterInner} />
+            </Pressable>
+            <Text style={styles.shutterLabel}>shoot</Text>
+
+            <Text style={styles.stamp}>breeflowies · single use</Text>
           </View>
-          <FilmStrip count={6} color={TRIM} />
-          <Text style={styles.counterLabel}>shots on your roll</Text>
         </View>
 
-        {/* shutter */}
-        <View style={styles.shutterRow}>
-          <Pressable
-            onPress={snap}
-            disabled={shutterDisabled}
-            style={({ pressed }) => [
-              styles.shutterOuter,
-              pressed && styles.shutterPressed,
-              shutterDisabled && styles.shutterDisabled,
-            ]}
-          >
-            <View style={styles.shutterInner} />
-          </Pressable>
-        </View>
-
-        {/* upload status */}
+        {/* upload status — system feedback, off the camera body */}
         <View style={styles.statusRow}>
           {uploading > 0 && <Text style={styles.statusText}>↑ saving {uploading}…</Text>}
           {failed > 0 && (
@@ -276,18 +309,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 2,
   },
-  viewfinderRow: {
-    marginTop: Spacing.five,
+
+  // molded camera body — subtly raised plastic shell
+  shell: {
+    flex: 1,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.three,
+    borderRadius: Radius.card,
+    backgroundColor: PANEL,
+    borderWidth: 1,
+    borderColor: TRIM,
+    // faint top highlight + darker base = a molded, lit-from-above feel
+    borderTopColor: Colors.backgroundSelected,
+    padding: Spacing.four,
+  },
+
+  // top cluster: printed labels on the left, finder + wheel on the right
+  cluster: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'flex-start',
+  },
+  printStack: {
+    gap: Spacing.one,
+    paddingTop: Spacing.one,
+  },
+  printLarge: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.monoBold,
+    fontSize: 13,
+    letterSpacing: 2,
+  },
+  print: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
+  },
+  finderWheel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  wheelColumn: {
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  wheel: {
+    width: 30,
+    height: 56,
+    borderRadius: 6,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: TRIM,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  wheelRidge: {
+    width: 2,
+    height: 40,
+    borderRadius: 1,
+    backgroundColor: TRIM,
+  },
+  wheelLabel: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 9,
+    letterSpacing: 1.5,
   },
   viewfinder: {
     width: 132,
     height: 92,
     borderRadius: 10,
     overflow: 'hidden',
+    // recessed into the body: dark well, thin trim
     borderWidth: 3,
-    borderColor: TRIM,
-    backgroundColor: '#000',
+    borderColor: Colors.background,
+    backgroundColor: Colors.photoBackdrop,
   },
   viewfinderOverlay: {
     position: 'absolute',
@@ -325,7 +425,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#000',
+    backgroundColor: Colors.photoBackdrop,
   },
   fallbackText: {
     color: Colors.textSecondary,
@@ -337,14 +437,27 @@ const styles = StyleSheet.create({
     marginTop: Spacing.four,
     gap: Spacing.three,
   },
-  counterRow: {
+
+  // recessed frame counter
+  counterArea: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
   },
+  counterPlate: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Colors.background,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: TRIM,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+  },
   counterWindow: {
-    backgroundColor: '#000',
+    backgroundColor: Colors.photoBackdrop,
     borderWidth: 1,
     borderColor: TRIM,
     borderRadius: 8,
@@ -363,9 +476,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 1,
   },
-  shutterRow: {
+
+  // bottom deck
+  deck: {
     alignItems: 'center',
-    paddingBottom: Spacing.four,
+    gap: Spacing.two,
+  },
+  readyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginBottom: Spacing.one,
+  },
+  readyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: TRIM,
+  },
+  readyDotOn: {
+    backgroundColor: ACCENT,
+  },
+  readyText: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
+  },
+  shutterLabel: {
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    letterSpacing: 2,
+  },
+  stamp: {
+    marginTop: Spacing.two,
+    color: Colors.textSecondary,
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    opacity: 0.7,
   },
   shutterOuter: {
     width: 84,
@@ -408,7 +558,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Colors.onPhotoBackdrop,
   },
   closedOverlay: {
     position: 'absolute',

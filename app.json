@@ -36,6 +36,13 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "bree flowies needs access to your photos so you can set a profile picture.",
+          "cameraPermission": "bree flowies uses the camera so you can take a profile picture."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#0C0A09",

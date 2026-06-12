@@ -86,7 +86,7 @@ export default function GroupsScreen() {
                         <View style={styles.groupRowText}>
                             <ThemedText type="default">{item.name}</ThemedText>
                             <ThemedText type="small" themeColor="textSecondary">
-                                {item.memberNames.length} {item.memberNames.length === 1 ? 'member' : 'members'}
+                                {item.members.length} {item.members.length === 1 ? 'member' : 'members'}
                             </ThemedText>
                         </View>
                         <ThemedText themeColor="textSecondary">›</ThemedText>
