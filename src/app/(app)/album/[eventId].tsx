@@ -143,7 +143,13 @@ export default function AlbumScreen() {
             ) : null
           }
           renderItem={({ item, index }) => (
-            <PhotoCell id={item.id} url={item.url} size={cellSize} onPress={() => setViewerIndex(index)} />
+            <PhotoCell
+              id={item.id}
+              url={item.url}
+              size={cellSize}
+              isVideo={/\.mov$/i.test(item.storage_path)}
+              onPress={() => setViewerIndex(index)}
+            />
           )}
           ListEmptyComponent={
             loaded ? (

@@ -32,7 +32,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "bree flowies uses the camera to shoot photos into your group's event roll."
+          "cameraPermission": "bree flowies uses the camera to shoot photos into your group's event roll.",
+          "microphonePermission": "bree flowies uses the microphone to record video clips into your group's event roll."
         }
       ],
       [
@@ -51,7 +52,17 @@
             "imageWidth": 76
           }
         }
-      ]
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "bree flowies needs access to save photos from your group's roll to your camera roll.",
+          "photosPermission": "bree flowies needs access to save photos from your group's roll to your camera roll.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      "expo-sharing",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

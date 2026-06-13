@@ -1,5 +1,4 @@
-import { Link, Redirect, Stack } from 'expo-router';
-import { Pressable } from 'react-native';
+import { Redirect, Stack } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { Colors, Fonts } from '@/constants/theme';
@@ -24,17 +23,13 @@ export default function AppLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'bree flowies',
-          headerLargeTitle: true,
-          headerLargeTitleStyle: { fontFamily: Fonts.sansBold, color: Colors.text },
-          headerRight: () => (
-            <Link href="/settings" asChild>
-              <Pressable hitSlop={8}>
-                <ThemedText type="label" themeColor="textSecondary">
-                  settings
-                </ThemedText>
-              </Pressable>
-            </Link>
+          headerTitle: '',
+          // Instagram-style left-aligned wordmark; the header's right-side
+          // action icons (+, settings) are set per-screen in index.tsx.
+          headerLeft: () => (
+            <ThemedText style={{ fontFamily: Fonts.sansBold, fontSize: 22, letterSpacing: -0.5 }}>
+              bree flowies
+            </ThemedText>
           ),
         }}
       />

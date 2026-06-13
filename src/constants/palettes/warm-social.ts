@@ -23,6 +23,9 @@ export const warmSocial: Palette = {
   photoBackdrop: '#000',
   onPhotoBackdrop: '#fff',
 
+  cameraBody: '#1E1813',
+  cameraBodyEdge: '#3A2F28',
+
   /** Warm, slightly richer tones to match the espresso base. */
   avatarTones: ['#E8A15B', '#C9956B', '#D98E7A', '#B98CA0', '#8FA08A', '#D4A5A5'],
   onAvatarTone: '#241008',

@@ -21,6 +21,9 @@ export const filmLab: Palette = {
   photoBackdrop: '#000',
   onPhotoBackdrop: '#fff',
 
+  cameraBody: '#16130F',
+  cameraBodyEdge: '#2A241D',
+
   /** Muted film-stock tones — readable against the dark background. */
   avatarTones: ['#E8C170', '#A3B18A', '#C97B63', '#7FA8C9', '#B08BBB', '#D4A5A5'],
   onAvatarTone: '#15130C',

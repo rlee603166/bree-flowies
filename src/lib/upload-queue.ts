@@ -10,7 +10,7 @@ export type PendingUpload = {
   /** Local file from the camera; absent for dev fake shots which carry bytes */
   uri: string | null;
   bytes: Uint8Array | null;
-  extension: 'jpg' | 'png';
+  extension: 'jpg' | 'png' | 'mov';
   takenAt: string;
   attempts: number;
   status: 'uploading' | 'failed';
@@ -59,6 +59,24 @@ export function enqueuePhoto(args: {
   void processUpload(item);
 }
 
+/** Same retry queue, for a recorded video clip (always a local file uri). */
+export function enqueueVideo(args: { eventId: string; userId: string; uri: string }) {
+  const item: PendingUpload = {
+    id: Crypto.randomUUID(),
+    eventId: args.eventId,
+    userId: args.userId,
+    uri: args.uri,
+    bytes: null,
+    extension: 'mov',
+    takenAt: new Date().toISOString(),
+    attempts: 0,
+    status: 'uploading',
+  };
+  queue.push(item);
+  emit();
+  void processUpload(item);
+}
+
 export function retryFailedUploads() {
   for (const item of queue) {
     if (item.status === 'failed') {
@@ -74,7 +92,12 @@ async function processUpload(item: PendingUpload) {
   try {
     const bytes = item.bytes ?? (await new File(item.uri!).bytes());
     const path = `${item.eventId}/${item.userId}/${item.id}.${item.extension}`;
-    const contentType = item.extension === 'jpg' ? 'image/jpeg' : 'image/png';
+    const contentType =
+      item.extension === 'jpg'
+        ? 'image/jpeg'
+        : item.extension === 'png'
+          ? 'image/png'
+          : 'video/quicktime';
 
     const { error: uploadError } = await supabase.storage
       .from('photos')

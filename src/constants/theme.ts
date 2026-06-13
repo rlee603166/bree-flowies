@@ -8,13 +8,14 @@
  * (counters, codes, timers, labels) — see `Fonts` below.
  */
 import { filmLab } from './palettes/film-lab';
+import { instagram } from './palettes/instagram';
 import type { Palette } from './palettes/types';
 import { warmSocial } from './palettes/warm-social';
 
-const palettes = { filmLab, warmSocial } satisfies Record<string, Palette>;
+const palettes = { filmLab, warmSocial, instagram } satisfies Record<string, Palette>;
 
 /** ← Swap this one value to play with different color schemes. */
-const ACTIVE: keyof typeof palettes = 'filmLab';
+const ACTIVE: keyof typeof palettes = 'instagram';
 
 export const Colors: Palette = palettes[ACTIVE];
 

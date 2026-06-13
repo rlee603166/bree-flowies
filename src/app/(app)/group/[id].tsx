@@ -5,14 +5,15 @@ import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, View, useWindow
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { AppButton } from '@/components/ui/app-button';
-import { Avatar, AvatarStack } from '@/components/ui/avatar';
+import { Avatar } from '@/components/ui/avatar';
+import { EventCell } from '@/components/ui/event-cell';
 import { FabMenu, type FabAction } from '@/components/ui/fab-menu';
-import { FilmStrip } from '@/components/ui/film-strip';
 import { InviteSheet } from '@/components/ui/invite-sheet';
 import { NewEventSheet } from '@/components/ui/new-event-sheet';
 import { PeopleSheet } from '@/components/ui/people-sheet';
 import { PHOTO_COLUMNS, PHOTO_GRID_GAP, PhotoCell, photoCellSize } from '@/components/ui/photo-cell';
 import { PhotoViewer } from '@/components/ui/photo-viewer';
+import { StoryRing } from '@/components/ui/story-ring';
 import { SwipeTabs } from '@/components/ui/swipe-tabs';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -32,11 +33,24 @@ import {
   type ShotCount,
 } from '@/lib/api';
 import { useUserId } from '@/lib/auth-context';
-import { eventPhase, formatDevelopTime, formatEventDate } from '@/lib/event-state';
-import { onGroupActivity, type ShotEvent } from '@/lib/realtime';
+import { formatDevelopTime } from '@/lib/event-state';
 import { displayName } from '@/lib/names';
+import { onGroupActivity, type ShotEvent } from '@/lib/realtime';
 
 type GroupPhoto = PhotoWithAuthor & { url: string | null };
+
+const isVideo = (path: string) => /\.mov$/i.test(path);
+
+function Stat({ value, label, onPress }: { value: number; label: string; onPress?: () => void }) {
+  return (
+    <Pressable onPress={onPress} disabled={!onPress} style={styles.stat}>
+      <ThemedText type="smallBold">{value}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+    </Pressable>
+  );
+}
 
 export default function GroupScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -49,6 +63,8 @@ export default function GroupScreen() {
   const [members, setMembers] = useState<Member[]>([]);
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [counts, setCounts] = useState<ShotCount[]>([]);
+  const [photoCount, setPhotoCount] = useState(0);
+  const [coverUrls, setCoverUrls] = useState<Map<string, string>>(new Map());
   const [photos, setPhotos] = useState<GroupPhoto[]>([]);
   const [photosLoaded, setPhotosLoaded] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -62,16 +78,32 @@ export default function GroupScreen() {
 
   const refresh = useCallback(async () => {
     try {
-      const [groupData, memberData, eventData] = await Promise.all([
+      const [groupData, memberData, eventData, photoRows] = await Promise.all([
         getGroup(id),
         listMembers(id),
         listEvents(id),
+        listGroupPhotos(id),
       ]);
       setGroup(groupData);
       setMembers(memberData);
       setEvents(eventData);
+      setPhotoCount(photoRows.length);
       const active = eventData.find((e) => e.status === 'active');
       setCounts(active ? await shotCounts(active.id) : []);
+
+      // One cover per developed event — rows come back newest-first, so the
+      // first non-video photo we see for an event is its latest still.
+      const coverPath = new Map<string, string>();
+      for (const p of photoRows) {
+        if (!coverPath.has(p.event_id) && !isVideo(p.storage_path)) coverPath.set(p.event_id, p.storage_path);
+      }
+      const signed = await signedPhotoUrls([...coverPath.values()]);
+      const map = new Map<string, string>();
+      coverPath.forEach((path, eventId) => {
+        const url = signed.get(path);
+        if (url) map.set(eventId, url);
+      });
+      setCoverUrls(map);
     } catch (err) {
       Alert.alert('Could not load group', err instanceof Error ? err.message : undefined);
     } finally {
@@ -150,6 +182,9 @@ export default function GroupScreen() {
     return host ? displayName(host) : null;
   }, [activeEvent, members, userId]);
 
+  const openCamera = () =>
+    activeEvent && router.push({ pathname: '/camera/[eventId]', params: { eventId: activeEvent.id } });
+
   // Rejects on failure so the sheet stays open for a retry; resolves on success
   // after closing the sheet and pulling the new active event in.
   const handleCreateEvent = async (name: string) => {
@@ -163,15 +198,15 @@ export default function GroupScreen() {
     }
   };
 
-  // One active event per group, so only offer "new event" when none is live.
+  // Speed-dial: only offer "new event" when no roll is live (one active per group).
   const fabActions = useMemo<FabAction[]>(() => {
     const actions: FabAction[] = [];
-    if (!activeEvent && events.length > 0) {
-      actions.push({ key: 'new', label: '＋ new event', onPress: () => setNewEventOpen(true) });
+    if (!activeEvent) {
+      actions.push({ key: 'new', label: 'new event', icon: 'camera.fill', onPress: () => setNewEventOpen(true) });
     }
-    actions.push({ key: 'invite', label: '↗ invite others', onPress: () => setInviteOpen(true) });
+    actions.push({ key: 'invite', label: 'invite people', icon: 'person.badge.plus', onPress: () => setInviteOpen(true) });
     return actions;
-  }, [activeEvent, events.length]);
+  }, [activeEvent]);
 
   const confirmEndEvent = () => {
     if (!activeEvent) return;
@@ -193,33 +228,36 @@ export default function GroupScreen() {
     ]);
   };
 
-  // Fixed metadata above the tabs: roster + the live roll, if any.
+  // Instagram-profile header: ringed group avatar, stats, name, action buttons,
+  // and a live banner when a roll is running.
   const header = (
     <View style={styles.header}>
-      <Pressable
-        onPress={() => members.length > 0 && setPeopleOpen(true)}
-        style={styles.membersRow}
-        hitSlop={8}
-      >
-        <AvatarStack people={members.map((m) => ({ name: displayName(m), uri: m.avatar_url }))} />
-        <ThemedText type="label" themeColor="textSecondary">
-          {members.length} in the group ›
-        </ThemedText>
-      </Pressable>
+      <View style={styles.identity}>
+        <StoryRing
+          name={group?.name ?? ''}
+          uri={members[0]?.avatar_url}
+          size={84}
+          live={!!activeEvent}
+          onPress={() => (activeEvent ? openCamera() : members.length > 0 && setPeopleOpen(true))}
+        />
+        <View style={styles.stats}>
+          <Stat value={events.length} label="events" />
+          <Stat value={members.length} label="members" onPress={() => members.length > 0 && setPeopleOpen(true)} />
+          <Stat value={photoCount} label="photos" />
+        </View>
+      </View>
+
+      <ThemedText type="smallBold" style={styles.groupName}>
+        {group?.name ?? ''}
+      </ThemedText>
 
       {activeEvent && (
-        <View
-          style={[
-            styles.activeCard,
-            { borderColor: theme.accent, backgroundColor: theme.backgroundElement },
-          ]}
-        >
-          <ThemedText type="label" style={{ color: theme.accent }}>
-            ● live now
+        <View style={[styles.liveBanner, { borderColor: theme.accent, backgroundColor: theme.backgroundElement }]}>
+          <ThemedText type="smallBold" style={{ color: theme.accent }}>
+            ● live now · {activeEvent.name}
           </ThemedText>
-          <ThemedText type="subtitle">{activeEvent.name}</ThemedText>
           {eventHostName && (
-            <ThemedText type="label" themeColor="textSecondary">
+            <ThemedText type="small" themeColor="textSecondary">
               {eventHostName === 'you' ? "you're hosting" : `hosted by ${eventHostName}`}
             </ThemedText>
           )}
@@ -227,14 +265,11 @@ export default function GroupScreen() {
             {members.map((m) => {
               const shots = counts.find((c) => c.user_id === m.user_id)?.shots ?? 0;
               return (
-                <View
-                  key={m.user_id}
-                  style={[styles.shotChip, { backgroundColor: theme.backgroundSelected }]}
-                >
+                <View key={m.user_id} style={[styles.shotChip, { backgroundColor: theme.backgroundSelected }]}>
                   <Avatar name={displayName(m)} uri={m.avatar_url} size={18} />
-                  <ThemedText type="code" themeColor="textSecondary">
+                  <ThemedText type="small" themeColor="textSecondary">
                     {displayName(m)}{' '}
-                    <ThemedText type="code" themeColor="text">
+                    <ThemedText type="smallBold" themeColor="text">
                       {String(shots).padStart(2, '0')}
                     </ThemedText>
                   </ThemedText>
@@ -242,15 +277,10 @@ export default function GroupScreen() {
               );
             })}
           </View>
-          <AppButton
-            title="● open camera"
-            onPress={() =>
-              router.push({ pathname: '/camera/[eventId]', params: { eventId: activeEvent.id } })
-            }
-          />
+          <AppButton title="● open camera" onPress={openCamera} />
           {activeEvent.created_by === userId && (
             <Pressable onPress={confirmEndEvent} style={styles.endEvent} hitSlop={8}>
-              <ThemedText type="label" themeColor="danger">
+              <ThemedText type="smallBold" themeColor="danger">
                 end event
               </ThemedText>
             </Pressable>
@@ -264,49 +294,32 @@ export default function GroupScreen() {
     <FlatList
       data={pastEvents}
       keyExtractor={(e) => e.id}
-      contentContainerStyle={styles.tabContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-      renderItem={({ item }) => {
-        const phase = eventPhase(item);
-        return (
-          <Pressable
-            onPress={() => router.push({ pathname: '/album/[eventId]', params: { eventId: item.id } })}
-            style={({ pressed }) => [
-              styles.eventRow,
-              {
-                backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <FilmStrip direction="column" count={4} holeSize={4} style={styles.eventPerforation} />
-            <View style={styles.eventRowText}>
-              <ThemedText>{item.name}</ThemedText>
-              <ThemedText type="code" themeColor="textSecondary">
-                {formatEventDate(item.started_at)}
-              </ThemedText>
-              {phase === 'developing' && (
-                <ThemedText type="label" style={{ color: theme.accent }}>
-                  developing · ready {formatDevelopTime(item.develops_at)}
-                </ThemedText>
-              )}
-            </View>
-            <ThemedText themeColor="textSecondary">{phase === 'developing' ? '🎞️' : '›'}</ThemedText>
-          </Pressable>
-        );
-      }}
+      numColumns={PHOTO_COLUMNS}
+      columnWrapperStyle={{ gap: PHOTO_GRID_GAP }}
+      contentContainerStyle={styles.gridContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.textSecondary} />}
+      renderItem={({ item }) => (
+        <EventCell
+          event={item}
+          coverUrl={coverUrls.get(item.id) ?? null}
+          size={photoCellSize(width)}
+          onPress={() => router.push({ pathname: '/album/[eventId]', params: { eventId: item.id } })}
+        />
+      )}
       ListEmptyComponent={
         events.length === 0 ? (
           <View style={styles.empty}>
             <ThemedText type="subtitle">no events yet</ThemedText>
-            <ThemedText type="label" themeColor="textSecondary" style={styles.emptyText}>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
               start a roll and everyone can shoot into it.
             </ThemedText>
             <AppButton title="＋ new event" onPress={() => setNewEventOpen(true)} />
           </View>
         ) : (
           <View style={styles.empty}>
-            <ThemedText themeColor="textSecondary">no past events yet</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              no past events yet
+            </ThemedText>
           </View>
         )
       }
@@ -320,18 +333,19 @@ export default function GroupScreen() {
       numColumns={PHOTO_COLUMNS}
       columnWrapperStyle={{ gap: PHOTO_GRID_GAP }}
       contentContainerStyle={styles.gridContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadPhotos} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadPhotos} tintColor={theme.textSecondary} />}
       renderItem={({ item, index }) => (
         <PhotoCell
           id={item.id}
           url={item.url}
           size={photoCellSize(width)}
+          isVideo={isVideo(item.storage_path)}
           onPress={() => setViewerIndex(index)}
         />
       )}
       ListEmptyComponent={
         <View style={styles.empty}>
-          <ThemedText themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary">
             {photosLoaded ? 'no developed photos yet 🎞️' : 'loading…'}
           </ThemedText>
         </View>
@@ -346,8 +360,8 @@ export default function GroupScreen() {
       <SwipeTabs
         onIndexChange={handleTabChange}
         tabs={[
-          { key: 'events', label: 'events', content: eventsTab },
-          { key: 'pictures', label: 'all pictures', content: picturesTab },
+          { key: 'events', label: 'events', icon: 'square.grid.3x3', content: eventsTab },
+          { key: 'pictures', label: 'all pictures', icon: 'photo.on.rectangle.angled', content: picturesTab },
         ]}
       />
       {fabActions.length > 0 && <FabMenu actions={fabActions} />}
@@ -367,11 +381,7 @@ export default function GroupScreen() {
           code={group.join_code}
         />
       )}
-      <NewEventSheet
-        visible={newEventOpen}
-        onClose={() => setNewEventOpen(false)}
-        onCreate={handleCreateEvent}
-      />
+      <NewEventSheet visible={newEventOpen} onClose={() => setNewEventOpen(false)} onCreate={handleCreateEvent} />
     </ThemedView>
   );
 }
@@ -381,40 +391,33 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    padding: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.three,
     gap: Spacing.three,
   },
-  tabContent: {
-    padding: Spacing.three,
-    paddingBottom: Spacing.six + Spacing.five,
-    gap: Spacing.two,
-    flexGrow: 1,
-  },
-  gridContent: {
-    gap: PHOTO_GRID_GAP,
-    paddingBottom: Spacing.six + Spacing.five,
-    flexGrow: 1,
-  },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.three,
-    padding: Spacing.five,
-  },
-  emptyText: {
-    textAlign: 'center',
-  },
-  membersRow: {
+  identity: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
+    gap: Spacing.four,
   },
-  activeCard: {
+  stats: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  stat: {
+    alignItems: 'center',
+    gap: Spacing.half,
+  },
+  groupName: {
+    fontSize: 16,
+  },
+  liveBanner: {
     borderWidth: 1.5,
     borderRadius: Radius.card,
     padding: Spacing.three,
-    gap: Spacing.three,
+    gap: Spacing.two,
   },
   shotCounts: {
     flexDirection: 'row',
@@ -434,18 +437,19 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     padding: Spacing.one,
   },
-  eventRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.three,
-    borderRadius: Radius.card,
-    borderWidth: 1,
+  gridContent: {
+    gap: PHOTO_GRID_GAP,
+    paddingBottom: Spacing.six,
+    flexGrow: 1,
   },
-  eventPerforation: {
-    marginRight: Spacing.three,
-  },
-  eventRowText: {
+  empty: {
     flex: 1,
-    gap: Spacing.one,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.three,
+    padding: Spacing.five,
+  },
+  emptyText: {
+    textAlign: 'center',
   },
 });

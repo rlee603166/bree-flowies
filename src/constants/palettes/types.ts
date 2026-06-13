@@ -30,6 +30,11 @@ export type Palette = {
   /** Text/controls/flash drawn on top of `photoBackdrop`. */
   onPhotoBackdrop: string;
 
+  /** Molded-plastic of the disposable camera body — the chunky bezel. */
+  cameraBody: string;
+  /** Lit-from-above highlight edge of the camera body. */
+  cameraBodyEdge: string;
+
   /** Initial-avatar background tones, picked by name hash. */
   avatarTones: string[];
   /** The initial drawn on a colored avatar tone. */

@@ -1,11 +1,19 @@
+import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export type SwipeTab = { key: string; label: string; content: ReactNode };
+export type SwipeTab = {
+  key: string;
+  label: string;
+  /** When set, an SF Symbol is shown instead of the text label (IG icon-tabs). */
+  icon?: SFSymbol;
+  content: ReactNode;
+};
 
 /**
  * A row of tabs over a horizontally paged area — tap a label or swipe between
@@ -49,11 +57,16 @@ export function SwipeTabs({
               style={styles.tab}
               onPress={() => goTo(i)}
               accessibilityRole="tab"
+              accessibilityLabel={tab.label}
               accessibilityState={{ selected: active }}
             >
-              <ThemedText type="smallBold" themeColor={active ? 'text' : 'textSecondary'}>
-                {tab.label}
-              </ThemedText>
+              {tab.icon ? (
+                <SymbolView name={tab.icon} size={22} tintColor={active ? theme.text : theme.textSecondary} />
+              ) : (
+                <ThemedText type="smallBold" themeColor={active ? 'text' : 'textSecondary'}>
+                  {tab.label}
+                </ThemedText>
+              )}
               <View style={[styles.underline, { backgroundColor: active ? theme.accent : 'transparent' }]} />
             </Pressable>
           );
