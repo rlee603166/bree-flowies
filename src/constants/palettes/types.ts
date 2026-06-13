@@ -14,11 +14,13 @@ export type Palette = {
   border: string;
   text: string;
   textSecondary: string;
-  /** The one loud accent — develop timers, live indicators, primary buttons. */
+  /** The one loud accent — primary buttons, links, the text cursor. */
   accent: string;
   /** Text/icons sitting on top of an accent-filled surface. */
   onAccent: string;
   danger: string;
+  /** Recording / live signal — a fixed vivid red, not the accent. */
+  recording: string;
 
   /** Dim overlay behind the fab menu / transient layers. */
   scrim: string;

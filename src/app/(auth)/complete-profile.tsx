@@ -54,7 +54,7 @@ export default function CompleteProfileScreen() {
             </ThemedText>
             <ThemedText type="title" style={styles.logo}>
               there
-              <ThemedText type="title" themeColor="accent" style={styles.logo}>
+              <ThemedText type="title" themeColor="text" style={styles.logo}>
                 {' '}
                 ●
               </ThemedText>

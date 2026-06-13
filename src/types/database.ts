@@ -121,22 +121,28 @@ export type Database = {
       }
       groups: {
         Row: {
+          avatar_url: string | null
           created_at: string
           created_by: string | null
+          description: string | null
           id: string
           join_code: string
           name: string
         }
         Insert: {
+          avatar_url?: string | null
           created_at?: string
           created_by?: string | null
+          description?: string | null
           id?: string
           join_code?: string
           name: string
         }
         Update: {
+          avatar_url?: string | null
           created_at?: string
           created_by?: string | null
+          description?: string | null
           id?: string
           join_code?: string
           name?: string
@@ -230,6 +236,7 @@ export type Database = {
         Returns: string
       }
       delete_account: { Args: never; Returns: undefined }
+      delete_group: { Args: { p_group_id: string }; Returns: undefined }
       end_event: {
         Args: { p_event_id: string }
         Returns: {
@@ -251,6 +258,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      end_stale_events: { Args: never; Returns: number }
       event_shot_counts: {
         Args: { p_event_id: string }
         Returns: {
@@ -263,6 +271,11 @@ export type Database = {
         Returns: boolean
       }
       join_group: { Args: { p_join_code: string }; Returns: string }
+      leave_group: { Args: { p_group_id: string }; Returns: undefined }
+      remove_member: {
+        Args: { p_group_id: string; p_user_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

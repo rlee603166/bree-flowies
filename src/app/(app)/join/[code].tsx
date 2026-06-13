@@ -41,7 +41,7 @@ export default function JoinScreen() {
         </View>
       ) : (
         <View style={styles.center}>
-          <ActivityIndicator color={theme.accent} />
+          <ActivityIndicator color={theme.textSecondary} />
           <ThemedText type="label" themeColor="textSecondary">
             joining…
           </ThemedText>

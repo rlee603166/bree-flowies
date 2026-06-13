@@ -31,8 +31,11 @@ function GroupRow({ group, onPress }: { group: GroupSummary; onPress: () => void
           {group.name}
         </ThemedText>
         {live ? (
-          <ThemedText type="small" themeColor="accent" numberOfLines={1}>
-            ● live now · {live.name}
+          <ThemedText type="small" themeColor="text" numberOfLines={1}>
+            <ThemedText type="small" style={{ color: theme.recording }}>
+              ●
+            </ThemedText>{' '}
+            live now · {live.name}
           </ThemedText>
         ) : (
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>

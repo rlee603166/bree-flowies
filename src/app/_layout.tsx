@@ -19,7 +19,7 @@ const filmTheme = {
   ...DarkTheme,
   colors: {
     ...DarkTheme.colors,
-    primary: Colors.accent,
+    primary: Colors.text,
     background: Colors.background,
     card: Colors.background,
     text: Colors.text,

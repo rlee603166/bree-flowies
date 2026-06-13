@@ -35,6 +35,7 @@ export default function AppLayout() {
       />
       <Stack.Screen name="settings" options={{ title: 'settings' }} />
       <Stack.Screen name="group/[id]" options={{ title: '' }} />
+      <Stack.Screen name="group-settings/[id]" options={{ title: 'group settings' }} />
       <Stack.Screen name="join/[code]" options={{ title: '' }} />
       <Stack.Screen
         name="camera/[eventId]"

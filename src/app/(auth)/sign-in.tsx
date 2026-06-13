@@ -71,7 +71,7 @@ export default function SignInScreen() {
             </ThemedText>
             <ThemedText type="title" style={styles.logo}>
               flowies
-              <ThemedText type="title" themeColor="accent" style={styles.logo}>
+              <ThemedText type="title" themeColor="text" style={styles.logo}>
                 {' '}
                 ●
               </ThemedText>

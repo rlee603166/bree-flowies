@@ -22,6 +22,11 @@ type AvatarPickerProps = {
   avatarUrl: string | null;
   onChange: (url: string | null) => void;
   size?: number;
+  /**
+   * Override the upload (e.g. a group avatar). Defaults to uploading the user's
+   * own avatar via `uploadAvatar(userId, …)`.
+   */
+  upload?: (uri: string, previousUrl: string | null) => Promise<string>;
 };
 
 const PICK_OPTIONS = {
@@ -31,7 +36,14 @@ const PICK_OPTIONS = {
   quality: 0.7,
 };
 
-export function AvatarPicker({ userId, name, avatarUrl, onChange, size = 96 }: AvatarPickerProps) {
+export function AvatarPicker({
+  userId,
+  name,
+  avatarUrl,
+  onChange,
+  size = 96,
+  upload,
+}: AvatarPickerProps) {
   const [busy, setBusy] = useState(false);
 
   const pickFrom = async (source: 'library' | 'camera') => {
@@ -55,7 +67,8 @@ export function AvatarPicker({ userId, name, avatarUrl, onChange, size = 96 }: A
 
     setBusy(true);
     try {
-      const url = await uploadAvatar(userId, result.assets[0].uri, avatarUrl);
+      const uri = result.assets[0].uri;
+      const url = upload ? await upload(uri, avatarUrl) : await uploadAvatar(userId, uri, avatarUrl);
       onChange(url);
     } catch (err) {
       Alert.alert('Could not upload picture', err instanceof Error ? err.message : undefined);
@@ -111,7 +124,7 @@ export function AvatarPicker({ userId, name, avatarUrl, onChange, size = 96 }: A
         <Avatar name={name} uri={avatarUrl} size={size} />
         {busy && (
           <View style={[styles.overlay, { borderRadius: size / 2 }]}>
-            <ActivityIndicator color={Colors.accent} />
+            <ActivityIndicator color={Colors.text} />
           </View>
         )}
         {!busy && (

@@ -5,12 +5,13 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Colors } from '@/constants/theme';
 
+export const EVENTS_COLUMNS = 2;
 export const PHOTO_COLUMNS = 3;
 export const PHOTO_GRID_GAP = 2;
 
-/** Square edge length for a cell in a full-bleed 3-up grid of the given width. */
-export const photoCellSize = (width: number) =>
-  (width - PHOTO_GRID_GAP * (PHOTO_COLUMNS - 1)) / PHOTO_COLUMNS;
+/** Square edge length for a cell in a full-bleed grid of the given width and column count. */
+export const photoCellSize = (width: number, columns: number = PHOTO_COLUMNS) =>
+  (width - PHOTO_GRID_GAP * (columns - 1)) / columns;
 
 /**
  * One square in a photo grid. Shows a shimmer until its (signed) URL resolves

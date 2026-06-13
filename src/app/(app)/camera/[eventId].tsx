@@ -8,8 +8,16 @@ import {
 import * as Device from 'expo-device';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Reanimated, {
+  Easing,
+  cancelAnimation,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
 
 import { AppButton } from '@/components/ui/app-button';
 import { AvatarStack } from '@/components/ui/avatar';
@@ -31,24 +39,47 @@ import {
 // capture -> develop -> album flow stays testable.
 const FAKE_CAMERA = __DEV__ && !Device.isDevice;
 
-const ACCENT = Colors.accent;
-const REC = '#FF3B30'; // recording red — a fixed signal color, not a theme accent
 
 /** Max faces shown in the top-bar live stack before collapsing to "+N". */
 const MAX_FACES = 3;
 
-/** Height of the black control deck — the finder's rounded bottom rests on it. */
-const DECK_HEIGHT = 110;
-/** Bottom-corner radius of the finder, echoing the iPhone's screen corners. */
+/** The finder is a 3:4 portrait box pinned to the top — matching the 720×960 capture. */
+const FINDER_ASPECT = 4 / 3; // height / width
+/** Height of the title header band that sits above the finder. */
+const HEADER_H = 52;
+/** Corner radius of the finder card, echoing the iPhone's screen corners. */
 const FINDER_RADIUS = 36;
+/** Amber/yellow the flash glyph turns when armed — a fixed hardware signal color. */
+const FLASH_ON = '#FFD60A';
 
 /** Hold the shutter past this to start a clip instead of taking a frame. */
 const HOLD_MS = 300;
 /** Clips cap out here (seconds) — also enforced natively via maxDuration. */
-const MAX_CLIP_SECONDS = 30;
+const MAX_CLIP_SECONDS = 10;
+/**
+ * Hard byte ceiling for a clip, enforced natively via maxFileSize so a clip can
+ * never exceed the `photos` storage bucket's size limit (set a touch below it
+ * to leave headroom for the moov-atom finalize). Recording stops if hit.
+ */
+const MAX_CLIP_BYTES = 24 * 1024 * 1024;
+/**
+ * iOS honors `videoQuality` only for the 4:3 stop, so we constrain size on iOS
+ * through the H.264 codec + an explicit bitrate instead (videoBitrate needs a
+ * codec set on recordAsync). 720p H.264 @ 3 Mbps ≈ ~3.75 MB for a 10s clip —
+ * small, quick to upload on party LTE, and universally playable in the album.
+ */
+const VIDEO_BITRATE = 3_000_000;
+const VIDEO_CODEC = 'avc1'; // H.264
 
 /** Flash cycles like the native camera: off -> auto -> on. */
 const FLASH_CYCLE: FlashMode[] = ['off', 'auto', 'on'];
+
+// Perimeter progress arc around the shutter — fills over MAX_CLIP_SECONDS.
+const RING_SIZE = 96;
+const RING_STROKE = 4;
+const RING_R = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRC = 2 * Math.PI * RING_R;
+const AnimatedCircle = Reanimated.createAnimatedComponent(Circle);
 
 /**
  * A selectable zoom "stop" on the native pill cluster. expo-camera can't report
@@ -71,11 +102,11 @@ function buildZoomStops(lenses: string[]): ZoomStop[] {
   const telephoto = find('tele');
 
   const stops: ZoomStop[] = [];
-  if (ultraWide) stops.push({ label: '.5', zoom: 0, lens: ultraWide });
+  if (ultraWide) stops.push({ label: '.5×', zoom: 0, lens: ultraWide });
   // 1× is the default wide lens with no digital crop.
   stops.push({ label: '1×', zoom: 0 });
-  if (telephoto) stops.push({ label: '3', zoom: 0, lens: telephoto });
-  else stops.push({ label: '2', zoom: 0.05 }); // modest digital crop, device-dependent
+  if (telephoto) stops.push({ label: '3×', zoom: 0, lens: telephoto });
+  else stops.push({ label: '2×', zoom: 0.05 }); // modest digital crop, device-dependent
   return stops;
 }
 
@@ -87,10 +118,26 @@ export default function CameraScreen() {
   const userId = useUserId();
 
   const insets = useSafeAreaInsets();
+  // 3:4 finder, now sitting below a title header; the chin holds everything below.
+  const { width: screenWidth } = useWindowDimensions();
+  const finderHeight = Math.round(screenWidth * FINDER_ASPECT);
+  const finderTop = insets.top + HEADER_H;
   const cameraRef = useRef<CameraView>(null);
   const capturing = useRef(false);
+  // Hold-to-record state that must survive re-renders / stale closures:
+  // `recordStartedRef` = native recordAsync is actually rolling; `releasedRef`
+  // = the finger has come up. Together they close the race where a release
+  // lands before recording has begun and gets silently dropped.
+  const recordStartedRef = useRef(false);
+  const releasedRef = useRef(false);
   const [flashAnim] = useState(() => new Animated.Value(0));
   const [recordAnim] = useState(() => new Animated.Value(0)); // shutter morph: 0 disc → 1 red square
+  // Perimeter arc fill (0→1 over the 10s cap). Driven on the UI thread via
+  // Reanimated so it sweeps smoothly even while the camera reconfigures.
+  const progress = useSharedValue(0);
+  const ringProps = useAnimatedProps(() => ({
+    strokeDashoffset: RING_CIRC * (1 - progress.value),
+  }));
 
   const [permission, requestPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
@@ -121,7 +168,6 @@ export default function CameraScreen() {
 
   const uploads = useSyncExternalStore(subscribeToUploads, getUploads);
   const eventUploads = uploads.filter((u) => u.eventId === eventId);
-  const uploading = eventUploads.filter((u) => u.status === 'uploading').length;
   const failed = eventUploads.filter((u) => u.status === 'failed').length;
 
   // Event + group context: title, group name, roster, seed counts. The group
@@ -238,23 +284,59 @@ export default function CameraScreen() {
     if (micPermission && !micPermission.granted && micPermission.canAskAgain) {
       await requestMicPermission();
     }
+    releasedRef.current = false;
+    recordStartedRef.current = false;
     setRecSeconds(0);
+    // Switching into video mode reconfigures the native capture session.
+    // recordAsync must wait for it to come back ready — starting mid-reconfigure
+    // yields a clip that ignores BOTH stopRecording() and maxDuration. Drop
+    // `cameraReady` now; onCameraReady flips it back when the video session is up
+    // (the timeout is a fallback in case the event doesn't re-fire on this OS).
+    setCameraReady(false);
     setRecording(true);
-    Animated.timing(recordAnim, { toValue: 1, duration: 200, useNativeDriver: false }).start();
+    setTimeout(() => setCameraReady(true), 700);
+    Animated.timing(recordAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
   };
 
+  // Finger lifted. If native recording is already rolling, stop it now; if the
+  // capture session is still spinning up, just flag it — the record effect
+  // stops the clip the instant it actually starts. Reading refs (not the
+  // `recording` state) avoids the stale-closure case where this handler still
+  // thinks we aren't recording yet.
   const stopRecording = () => {
-    if (recording) cameraRef.current?.stopRecording();
+    releasedRef.current = true;
+    if (recordStartedRef.current) cameraRef.current?.stopRecording();
   };
 
   useEffect(() => {
-    if (!recording || FAKE_CAMERA) return;
+    // Gate on cameraReady: the video-mode session must be fully up before we
+    // start, or stopRecording()/maxDuration silently no-op on the clip.
+    if (!recording || !cameraReady || FAKE_CAMERA) return;
     const cam = cameraRef.current;
     if (!cam) return;
     let cancelled = false;
+    const resetUI = () => {
+      setRecording(false);
+      Animated.timing(recordAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    };
     (async () => {
+      // Released before video mode even applied — never start the clip.
+      if (releasedRef.current) {
+        resetUI();
+        return;
+      }
       try {
-        const video = await cam.recordAsync({ maxDuration: MAX_CLIP_SECONDS });
+        recordStartedRef.current = true;
+        const recordPromise = cam.recordAsync({
+          maxDuration: MAX_CLIP_SECONDS,
+          maxFileSize: MAX_CLIP_BYTES,
+          codec: VIDEO_CODEC, // required for videoBitrate to take effect on iOS
+        });
+        // Released during the brief mode-switch/startup window: native may not
+        // have begun capturing yet (an immediate stop would be dropped), so
+        // give it a beat, then stop. recordPromise resolves once it lands.
+        if (releasedRef.current) setTimeout(() => cam.stopRecording(), 350);
+        const video = await recordPromise;
         if (!cancelled && video?.uri) {
           enqueueVideo({ eventId, userId, uri: video.uri });
           setCounts((prev) => ({ ...prev, [userId]: (prev[userId] ?? 0) + 1 }));
@@ -262,18 +344,16 @@ export default function CameraScreen() {
       } catch {
         // recording failed to start/save; fall through and reset the UI
       } finally {
-        if (!cancelled) {
-          setRecording(false);
-          Animated.timing(recordAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
-        }
+        recordStartedRef.current = false;
+        if (!cancelled) resetUI();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [recording, eventId, userId, recordAnim]);
+  }, [recording, cameraReady, eventId, userId, recordAnim]);
 
-  // Recording clock + 30s safety stop (belt to maxDuration's braces).
+  // Recording clock + 10s safety stop (belt to maxDuration's braces).
   useEffect(() => {
     if (!recording) return;
     const startedAt = Date.now();
@@ -284,6 +364,22 @@ export default function CameraScreen() {
     }, 250);
     return () => clearInterval(id);
   }, [recording]);
+
+  // Sweep the perimeter arc 0→full over the 10s cap while recording; snap it
+  // back the moment recording stops (early release or the cap).
+  useEffect(() => {
+    if (!recording) {
+      cancelAnimation(progress);
+      progress.value = 0;
+      return;
+    }
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration: MAX_CLIP_SECONDS * 1000,
+      easing: Easing.linear,
+    });
+    return () => cancelAnimation(progress);
+  }, [recording, progress]);
 
   const cycleFlash = () =>
     setFlash((prev) => FLASH_CYCLE[(FLASH_CYCLE.indexOf(prev) + 1) % FLASH_CYCLE.length]);
@@ -306,52 +402,25 @@ export default function CameraScreen() {
   }, [members, counts]);
   const overflow = Math.max(0, faces.length - MAX_FACES);
 
-  // Shutter inner morphs from a white disc to a small red square while recording.
-  const innerStyle = {
-    width: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [62, 26] }),
-    height: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [62, 26] }),
-    borderRadius: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [31, 6] }),
-    backgroundColor: recordAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [Colors.onPhotoBackdrop, REC],
-    }),
+  // Shutter morph, all native-driver (scale + opacity) so it stays smooth even
+  // while flipping into video mode briefly blocks the JS thread: the white ring
+  // swells, the disc fades out, and a red rounded square forms in its place.
+  const ringScale = {
+    transform: [{ scale: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] }) }],
+  };
+  const discStyle = {
+    opacity: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+  };
+  const squareStyle = {
+    opacity: recordAnim,
+    transform: [{ scale: recordAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
   };
 
   return (
     <View style={styles.body}>
-      {/* full-bleed finder — edge to edge up top, rounded where it meets the deck */}
-      <View style={[styles.finder, { bottom: insets.bottom + DECK_HEIGHT }]}>
-        {needsPermission ? (
-          <View style={styles.finderFallback}>
-            <Text style={styles.fallbackText}>no access</Text>
-          </View>
-        ) : FAKE_CAMERA ? (
-          <View style={styles.finderFallback}>
-            <Text style={styles.fallbackText}>simulator</Text>
-          </View>
-        ) : (
-          <CameraView
-            ref={cameraRef}
-            style={styles.cameraFill}
-            facing={facing}
-            flash={flash}
-            mode={recording ? 'video' : 'picture'}
-            mute={!micGranted}
-            zoom={stop?.zoom ?? 0}
-            selectedLens={stop?.lens}
-            onCameraReady={onCameraReady}
-            onAvailableLensesChanged={({ lenses }) => lenses.length && applyLenses(lenses)}
-          />
-        )}
-      </View>
-
-      {/* top bar — exit · roll context (or recording clock) · contributor faces */}
-      <View style={[styles.topRow, { paddingTop: insets.top + Spacing.two }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.chip}>
-          <Text style={styles.chipGlyph}>✕</Text>
-        </Pressable>
-
-        <View style={styles.context} pointerEvents="none">
+      {/* title header — roll context pill, now sitting above the finder */}
+      <View style={[styles.header, { top: insets.top, height: HEADER_H }]} pointerEvents="none">
+        <View style={styles.contextPill}>
           {recording ? (
             <View style={styles.recBadge}>
               <View style={styles.recDot} />
@@ -370,17 +439,84 @@ export default function CameraScreen() {
             </>
           )}
         </View>
+      </View>
 
-        <View style={styles.faces}>
-          {faces.length > 0 ? (
-            <>
-              <AvatarStack people={faces.slice(0, MAX_FACES)} size={28} />
-              {overflow > 0 && <Text style={styles.facesOverflow}>+{overflow}</Text>}
-            </>
-          ) : (
-            <Text style={styles.facesEmpty}>—</Text>
-          )}
+      {/* 3:4 finder — rounded card below the header; controls overlay its corners */}
+      <View style={[styles.finder, { top: finderTop, height: finderHeight }]}>
+        {needsPermission ? (
+          <View style={styles.finderFallback}>
+            <Text style={styles.fallbackText}>no access</Text>
+          </View>
+        ) : FAKE_CAMERA ? (
+          <View style={styles.finderFallback}>
+            <Text style={styles.fallbackText}>simulator</Text>
+          </View>
+        ) : (
+          <CameraView
+            ref={cameraRef}
+            style={styles.cameraFill}
+            facing={facing}
+            flash={flash}
+            mode={recording ? 'video' : 'picture'}
+            videoQuality="720p"
+            videoBitrate={VIDEO_BITRATE}
+            mute={!micGranted}
+            zoom={stop?.zoom ?? 0}
+            selectedLens={stop?.lens}
+            onCameraReady={onCameraReady}
+            onAvailableLensesChanged={({ lenses }) => lenses.length && applyLenses(lenses)}
+          />
+        )}
+
+        {/* top overlay — exit (corner) · contributor faces (corner) */}
+        <View style={styles.viewportTop}>
+          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.chip}>
+            <Text style={styles.chipGlyph}>✕</Text>
+          </Pressable>
+
+          <View style={styles.faces}>
+            {faces.length > 0 && (
+              <>
+                <AvatarStack people={faces.slice(0, MAX_FACES)} size={28} />
+                {overflow > 0 && <Text style={styles.facesOverflow}>+{overflow}</Text>}
+              </>
+            )}
+          </View>
         </View>
+
+        {/* bottom overlay — flip (corner) · zoom pills (centered) */}
+        {!needsPermission && (
+          <View style={styles.viewportBottom}>
+            <Pressable onPress={flipCamera} hitSlop={10} disabled={recording} style={styles.chip}>
+              <Text style={styles.chipGlyph}>⟲</Text>
+            </Pressable>
+
+            {showZoom ? (
+              <View style={styles.zoomCluster}>
+                {zoomStops.map((s, i) => {
+                  const active = i === activeZoom;
+                  return (
+                    <Pressable
+                      key={s.label}
+                      onPress={() => setActiveZoom(i)}
+                      hitSlop={6}
+                      style={[styles.zoomPill, active && styles.zoomPillActive]}
+                    >
+                      <Text style={[styles.zoomText, active && styles.zoomTextActive]}>
+                        {active ? s.label : s.label.replace('×', '')}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.spacer} />
+            )}
+
+            {/* transparent spacer — balances the flip chip so zoom stays centered */}
+            <View style={styles.spacer} />
+          </View>
+        )}
       </View>
 
       {/* permission prompt floats over the dead finder */}
@@ -397,91 +533,87 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* controls row — flip · zoom pills */}
-      <View style={[styles.controlsRow, { bottom: insets.bottom + 188 }]}>
-        <Pressable onPress={flipCamera} hitSlop={10} disabled={recording} style={styles.chip}>
-          <Text style={styles.chipGlyph}>⟲</Text>
-        </Pressable>
+      {/* chin — the black area below the finder, holding the controls + shutter.
+          Centered so the cluster sits comfortably on every screen size. */}
+      <View style={[styles.chin, { top: finderTop + finderHeight, paddingBottom: insets.bottom + Spacing.three }]}>
+        {/* deck — VAULT · SHUTTER · FLASH */}
+        <View style={styles.deck}>
+          {/* the hidden vault: the native thumbnail slot, repurposed — photos stay
+              invisible until develop, so this shows the live group shot total */}
+          <View style={styles.deckSlot}>
+            <View style={styles.vault}>
+              <Text style={styles.vaultCount}>{vaultTotal}</Text>
+              <Text style={styles.vaultLabel}>VAULT</Text>
+            </View>
+          </View>
 
-        {showZoom ? (
-          <View style={styles.zoomCluster}>
-            {zoomStops.map((s, i) => {
-              const active = i === activeZoom;
-              return (
-                <Pressable
-                  key={s.label}
-                  onPress={() => setActiveZoom(i)}
-                  hitSlop={6}
-                  style={[styles.zoomPill, active && styles.zoomPillActive]}
+          <View style={styles.deckSlot}>
+            <View style={styles.shutterWrap}>
+              {recording && (
+                <Svg
+                  width={RING_SIZE}
+                  height={RING_SIZE}
+                  style={styles.progressRing}
+                  pointerEvents="none"
                 >
-                  <Text style={[styles.zoomText, active && styles.zoomTextActive]}>
-                    {active ? s.label : s.label.replace('×', '')}
-                  </Text>
-                </Pressable>
-              );
-            })}
+                  <AnimatedCircle
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
+                    r={RING_R}
+                    fill="none"
+                    stroke={Colors.recording}
+                    strokeWidth={RING_STROKE}
+                    strokeLinecap="round"
+                    strokeDasharray={RING_CIRC}
+                    animatedProps={ringProps}
+                    // start at 12 o'clock and sweep clockwise
+                    transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
+                  />
+                </Svg>
+              )}
+              <Pressable
+                onPress={() => !recording && snap()}
+                onLongPress={startRecording}
+                onPressOut={stopRecording}
+                delayLongPress={HOLD_MS}
+                disabled={shutterDisabled}
+                style={({ pressed }) => [
+                  styles.shutterHit,
+                  pressed && !recording && styles.shutterPressed,
+                  shutterDisabled && styles.shutterDisabled,
+                ]}
+              >
+                <Animated.View style={[styles.shutterRing, ringScale]}>
+                  <View style={styles.shutterInner}>
+                    <Animated.View style={[styles.shutterDisc, discStyle]} />
+                    <Animated.View style={[styles.shutterSquare, squareStyle]} />
+                  </View>
+                </Animated.View>
+              </Pressable>
+            </View>
           </View>
-        ) : (
-          <View style={styles.chip} pointerEvents="none" />
-        )}
 
-        {/* balances the flip button, keeping the zoom cluster centered */}
-        <View style={styles.chip} pointerEvents="none" />
-      </View>
-
-      {/* bottom deck — VAULT · SHUTTER · FLASH */}
-      <View style={[styles.deck, { paddingBottom: insets.bottom + Spacing.three }]}>
-        {/* the hidden vault: the native thumbnail slot, repurposed — photos stay
-            invisible until develop, so this shows the live group shot total */}
-        <View style={styles.deckSlot}>
-          <View style={styles.vault}>
-            <Text style={styles.vaultCount}>{vaultTotal}</Text>
-            <Text style={styles.vaultLabel}>VAULT</Text>
+          <View style={styles.deckSlot}>
+            <Pressable onPress={cycleFlash} hitSlop={12} disabled={recording} style={styles.flash}>
+              <Text style={[styles.flashGlyph, flash !== 'off' && styles.flashGlyphOn]}>⚡︎</Text>
+              {flash === 'auto' && <Text style={styles.flashAuto}>A</Text>}
+            </Pressable>
           </View>
         </View>
-
-        <View style={styles.deckSlot}>
-          <Pressable
-            onPress={() => !recording && snap()}
-            onLongPress={startRecording}
-            onPressOut={stopRecording}
-            delayLongPress={HOLD_MS}
-            disabled={shutterDisabled}
-            style={({ pressed }) => [
-              styles.shutterOuter,
-              recording && styles.shutterOuterRec,
-              pressed && !recording && styles.shutterPressed,
-              shutterDisabled && styles.shutterDisabled,
-            ]}
-          >
-            <Animated.View style={innerStyle} />
-          </Pressable>
-        </View>
-
-        <View style={styles.deckSlot}>
-          <Pressable onPress={cycleFlash} hitSlop={12} disabled={recording} style={styles.flash}>
-            <Text style={[styles.flashGlyph, flash !== 'off' && styles.flashGlyphOn]}>⚡︎</Text>
-            {flash === 'auto' && <Text style={styles.flashAuto}>A</Text>}
-          </Pressable>
-        </View>
       </View>
 
-      {/* upload status — system feedback, floats above the deck */}
-      <View style={[styles.statusRow, { bottom: insets.bottom + 150 }]}>
-        {uploading > 0 && <Text style={styles.statusText}>↑ saving {uploading}…</Text>}
-        {failed > 0 && (
-          <Pressable onPress={retryFailedUploads} hitSlop={8}>
-            <Text style={[styles.statusText, styles.statusFailed]}>
-              {failed} didn’t save — tap to retry
-            </Text>
+      {/* upload failures — a floating toast just below the finder; absolute so it
+          never shifts the deck. Successful uploads stay silent. */}
+      {failed > 0 && (
+        <View
+          style={[styles.toastWrap, { top: finderTop + finderHeight + Spacing.three }]}
+          pointerEvents="box-none"
+        >
+          <Pressable onPress={retryFailedUploads} hitSlop={8} style={styles.toast}>
+            <Text style={styles.toastText}>{failed} didn’t save — tap to retry</Text>
           </Pressable>
-        )}
-        {uploading === 0 && failed === 0 && (
-          <Text style={styles.statusText}>
-            {recording ? 'recording — release to stop' : 'tap to shoot · hold for video 🎞️'}
-          </Text>
-        )}
-      </View>
+        </View>
+      )}
 
       {/* roll closed — soft block: shutter is dead, they tap out when ready */}
       {rollClosed && (
@@ -503,6 +635,9 @@ export default function CameraScreen() {
 }
 
 const CHIP = 42;
+// Inset that nestles a round CHIP concentric inside the finder's corner arc, so
+// the gap is even along both straight edges and the rounded corner (36 − 21 = 15).
+const CORNER_INSET = FINDER_RADIUS - CHIP / 2;
 
 const styles = StyleSheet.create({
   body: {
@@ -510,21 +645,44 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.photoBackdrop,
   },
 
-  // top bar — floats over the top of the full-bleed finder
-  topRow: {
+  // title header — centered roll context pill, sitting above the finder
+  header: {
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
+  },
+  // top overlay — exit chip (corner) · faces (corner), nestled in the finder
+  viewportTop: {
+    position: 'absolute',
+    top: CORNER_INSET,
+    left: CORNER_INSET,
+    right: CORNER_INSET,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.two,
     gap: Spacing.three,
   },
-  context: {
-    flex: 1,
+  // bottom overlay — flip chip (corner) · zoom pills (centered)
+  viewportBottom: {
+    position: 'absolute',
+    bottom: CORNER_INSET,
+    left: CORNER_INSET,
+    right: CORNER_INSET,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  // the roll context sits in a translucent pill, matching the other overlay chrome.
+  // maxWidth lets it use the full header width, then the lines ellipsize cleanly.
+  contextPill: {
+    maxWidth: '100%',
+    backgroundColor: Colors.scrimStrong,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
     alignItems: 'center',
   },
   eventName: {
@@ -552,7 +710,7 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: REC,
+    backgroundColor: Colors.recording,
   },
   recText: {
     color: Colors.onPhotoBackdrop,
@@ -573,12 +731,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.mono,
     fontSize: 11,
   },
-  facesEmpty: {
-    color: Colors.onPhotoBackdrop,
-    opacity: 0.6,
-    fontFamily: Fonts.mono,
-    fontSize: 16,
-  },
 
   // translucent gray circle controls (native style)
   chip: {
@@ -593,16 +745,19 @@ const styles = StyleSheet.create({
     color: Colors.onPhotoBackdrop,
     fontSize: 18,
   },
+  // invisible CHIP-width placeholder that keeps the zoom cluster centered
+  spacer: {
+    width: CHIP,
+  },
 
-  // full-bleed finder — pinned under the top edge, clipped with rounded bottom
+  // 3:4 finder — full-bleed width, offset below the status bar (top set inline),
+  // clipped with a rounded bottom where it meets the black chin
   finder: {
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
     overflow: 'hidden',
-    borderBottomLeftRadius: FINDER_RADIUS,
-    borderBottomRightRadius: FINDER_RADIUS,
+    borderRadius: FINDER_RADIUS,
     backgroundColor: '#000',
   },
   cameraFill: {
@@ -636,15 +791,19 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
 
-  // controls row (flip · zoom) — floats just above the deck
-  controlsRow: {
+  // chin — the black region below the 3:4 finder. Holds the control cluster,
+  // vertically centered so it adapts to any screen size.
+  chin: {
     position: 'absolute',
-    left: Spacing.four,
-    right: Spacing.four,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'stretch',
+    gap: Spacing.four,
+    paddingHorizontal: Spacing.four,
   },
+
   zoomCluster: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -671,21 +830,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   zoomTextActive: {
-    color: ACCENT,
+    color: Colors.onPhotoBackdrop,
     fontSize: 13,
   },
 
-  // bottom deck — solid dark bar pinned to the bottom
+  // deck — VAULT · SHUTTER · FLASH row, the bottom of the chin cluster
   deck: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
     backgroundColor: Colors.photoBackdrop,
   },
   deckSlot: {
@@ -705,7 +858,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   vaultCount: {
-    color: ACCENT,
+    color: Colors.onPhotoBackdrop,
     fontFamily: Fonts.monoBold,
     fontSize: 20,
     fontVariant: ['tabular-nums'],
@@ -718,8 +871,26 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // shutter — native white double-ring, morphs to a red square while recording
-  shutterOuter: {
+  // shutter — fixed-size slot holding the SVG progress arc, a white ring that
+  // swells, and an inner that morphs from a white disc to a red square
+  shutterWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressRing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  shutterHit: {
+    width: 78,
+    height: 78,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shutterRing: {
     width: 78,
     height: 78,
     borderRadius: 39,
@@ -727,10 +898,29 @@ const styles = StyleSheet.create({
     borderColor: Colors.onPhotoBackdrop,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
   },
-  shutterOuterRec: {
-    borderColor: REC,
+  shutterInner: {
+    width: 62,
+    height: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // resting white disc — fades out as the red square fades in
+  shutterDisc: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 31,
+    backgroundColor: Colors.onPhotoBackdrop,
+  },
+  // recording red square — scales + fades in over the disc
+  shutterSquare: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: Colors.recording,
   },
   shutterPressed: {
     transform: [{ scale: 0.93 }],
@@ -754,31 +944,33 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   flashGlyphOn: {
-    color: ACCENT,
+    color: FLASH_ON,
   },
   flashAuto: {
-    color: ACCENT,
+    color: FLASH_ON,
     fontFamily: Fonts.monoBold,
     fontSize: 11,
     marginLeft: 1,
     marginTop: -6,
   },
 
-  statusRow: {
+  // floating failure toast — absolute, so it overlays without shifting the deck
+  toastWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
     alignItems: 'center',
   },
-  statusText: {
-    color: Colors.onPhotoBackdrop,
-    opacity: 0.8,
+  toast: {
+    backgroundColor: Colors.scrimStrong,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  toastText: {
+    color: Colors.danger,
     fontFamily: Fonts.mono,
     fontSize: 12,
-  },
-  statusFailed: {
-    color: Colors.danger,
-    opacity: 1,
   },
   flashOverlay: {
     position: 'absolute',
@@ -801,7 +993,7 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
   },
   closedTitle: {
-    color: ACCENT,
+    color: Colors.onPhotoBackdrop,
     fontFamily: Fonts.mono,
     fontSize: 20,
     letterSpacing: 1,

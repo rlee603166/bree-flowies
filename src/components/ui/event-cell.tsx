@@ -5,9 +5,9 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Radius, Spacing } from '@/constants/theme';
+import { Colors, Radius, Spacing } from '@/constants/theme';
 import type { AppEvent } from '@/lib/api';
-import { eventPhase, formatEventDate } from '@/lib/event-state';
+import { eventPhase, formatEventDate, formatEventDateNumeric } from '@/lib/event-state';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -17,80 +17,81 @@ import { useTheme } from '@/hooks/use-theme';
  * back to a labeled dark tile. Tapping always opens the album.
  */
 export function EventCell({
-  event,
-  coverUrl,
-  size,
-  onPress,
+    event,
+    coverUrl,
+    size,
+    onPress,
 }: {
-  event: AppEvent;
-  /** Signed URL of the roll's cover photo, when developed and non-empty. */
-  coverUrl: string | null;
-  size: number;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const [loaded, setLoaded] = useState(false);
-  const developing = eventPhase(event) === 'developing';
+        event: AppEvent;
+        /** Signed URL of the roll's cover photo, when developed and non-empty. */
+        coverUrl: string | null;
+        size: number;
+        onPress: () => void;
+    }) {
+    const theme = useTheme();
+    const [loaded, setLoaded] = useState(false);
+    const developing = eventPhase(event) === 'developing';
 
-  return (
-    <Pressable onPress={onPress}>
-      <View style={[styles.cell, { width: size, height: size, backgroundColor: theme.backgroundElement }]}>
-        {coverUrl && (
-          <>
-            {!loaded && <Skeleton style={StyleSheet.absoluteFill} />}
-            <Image
-              source={{ uri: coverUrl }}
-              style={StyleSheet.absoluteFill}
-              contentFit="cover"
-              recyclingKey={event.id}
-              transition={150}
-              onLoad={() => setLoaded(true)}
-            />
-          </>
-        )}
+    return (
+        <Pressable onPress={onPress}>
+            <View style={[styles.cell, { width: size, height: size, backgroundColor: theme.backgroundElement }]}>
+                {coverUrl && (
+                    <>
+                        {!loaded && <Skeleton style={StyleSheet.absoluteFill} />}
+                        <Image
+                            source={{ uri: coverUrl }}
+                            style={StyleSheet.absoluteFill}
+                            contentFit="cover"
+                            recyclingKey={event.id}
+                            transition={150}
+                            onLoad={() => setLoaded(true)}
+                        />
+                    </>
+                )}
 
-        {developing && (
-          <View style={[StyleSheet.absoluteFill, styles.center]}>
-            <SymbolView name="hourglass" size={22} tintColor={theme.accent} />
-          </View>
-        )}
+                {developing && (
+                    <View style={[StyleSheet.absoluteFill, styles.center]}>
+                        <SymbolView name="hourglass" size={22} tintColor={theme.text} />
+                    </View>
+                )}
 
-        {/* Bottom scrim with the roll name + date — always legible over a cover. */}
-        <View style={styles.overlay}>
-          <ThemedText type="smallBold" numberOfLines={1} style={styles.onCover}>
-            {event.name}
-          </ThemedText>
-          <ThemedText
-            type="small"
-            numberOfLines={1}
-            style={[styles.onCover, { color: developing ? theme.accent : 'rgba(255,255,255,0.7)' }]}
-          >
-            {developing ? 'developing' : formatEventDate(event.started_at)}
-          </ThemedText>
-        </View>
-      </View>
-    </Pressable>
-  );
+                {/* Bottom scrim with the roll name + date — always legible over a cover. */}
+                <View style={styles.overlay}>
+                    <ThemedText type="smallBold" numberOfLines={1} style={styles.onCover}>
+                        {event.name}
+                    </ThemedText>
+                    <ThemedText
+                        type="small"
+                        numberOfLines={1}
+                        style={[styles.onCover, { color: developing ? theme.text : 'rgba(255,255,255,0.7)' }]}
+                    >
+                        {developing ? 'soon' : formatEventDateNumeric(event.started_at)}
+                    </ThemedText>
+                </View>
+            </View>
+        </Pressable>
+    );
 }
 
 const styles = StyleSheet.create({
-  cell: {
-    borderRadius: Radius.card / 2,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-  },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  overlay: {
-    paddingHorizontal: Spacing.two,
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
-    // Bottom-up dark scrim so text stays readable on bright covers.
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  onCover: {
-    color: '#fff',
-  },
+    cell: {
+        // borderRadius: Radius.card / 2,
+        overflow: 'hidden',
+        justifyContent: 'flex-end',
+    },
+    center: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    overlay: {
+        paddingHorizontal: Spacing.two,
+        paddingTop: Spacing.three,
+        paddingBottom: Spacing.two,
+
+        // Bottom-up dark scrim so text stays readable on bright covers.
+        backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+    onCover: {
+        color: Colors.onPhotoBackdrop,
+    },
 });

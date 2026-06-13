@@ -55,7 +55,7 @@ export function StoryRing({ name, uri, size = 68, live, create, label, onPress }
             cy={size / 2}
             r={radius}
             fill="none"
-            stroke={live ? 'url(#ig-ring)' : theme.border}
+            stroke={live ? 'url(#ig-ring)' : ""}
             strokeWidth={live ? RING_WIDTH : 1}
             strokeDasharray={create ? '4 4' : undefined}
           />

@@ -1,7 +1,9 @@
 import * as Crypto from 'expo-crypto';
 import { File } from 'expo-file-system';
 
+import { applyFilmLook } from '@/lib/film-look';
 import { supabase } from '@/lib/supabase';
+import { cropVideoTo3x4 } from '@/lib/video-crop';
 
 export type PendingUpload = {
   id: string;
@@ -88,16 +90,50 @@ export function retryFailedUploads() {
   emit();
 }
 
-async function processUpload(item: PendingUpload) {
+/**
+ * Best-effort archive of the untouched original to the private `originals`
+ * bucket (no SELECT policy — users never see it; kept for later reprocessing).
+ * A failure here must NOT block the develop-able effect copy, so it's swallowed.
+ */
+async function archiveOriginal(item: PendingUpload, rawBytes: Uint8Array) {
   try {
-    const bytes = item.bytes ?? (await new File(item.uri!).bytes());
     const path = `${item.eventId}/${item.userId}/${item.id}.${item.extension}`;
-    const contentType =
-      item.extension === 'jpg'
-        ? 'image/jpeg'
-        : item.extension === 'png'
-          ? 'image/png'
-          : 'video/quicktime';
+    const contentType = item.extension === 'png' ? 'image/png' : 'image/jpeg';
+    const { error } = await supabase.storage
+      .from('originals')
+      .upload(path, rawBytes.buffer as ArrayBuffer, { contentType });
+    if (error && !/exists/i.test(error.message)) {
+      console.warn('[upload-queue] failed to archive original', error.message);
+    }
+  } catch (err) {
+    console.warn('[upload-queue] failed to archive original', err);
+  }
+}
+
+async function processUpload(item: PendingUpload) {
+  // The 720×960 clip produced by the native crop, if any — cleaned up on success.
+  let croppedUri: string | null = null;
+  try {
+    let bytes: Uint8Array;
+    let extension = item.extension;
+
+    if (item.extension === 'mov') {
+      // Crop the clip to 720×960 (3:4) to match the photo frame; on any failure
+      // (Android, no native module, export error) fall back to the original.
+      croppedUri = await cropVideoTo3x4(item.uri!).catch(() => item.uri!);
+      bytes = await new File(croppedUri).bytes();
+    } else {
+      // Photos get the baked-in film look (cropped to 720×960 in there), and the
+      // untouched original is archived in the private `originals` bucket.
+      const rawBytes = item.bytes ?? (await new File(item.uri!).bytes());
+      const result = await applyFilmLook(rawBytes, item.takenAt);
+      bytes = result.effectBytes;
+      extension = 'jpg'; // the effect copy is always re-encoded as jpeg
+      await archiveOriginal(item, result.rawBytes);
+    }
+
+    const path = `${item.eventId}/${item.userId}/${item.id}.${extension}`;
+    const contentType = extension === 'jpg' ? 'image/jpeg' : 'video/quicktime';
 
     const { error: uploadError } = await supabase.storage
       .from('photos')
@@ -122,6 +158,13 @@ async function processUpload(item: PendingUpload) {
         new File(item.uri).delete();
       } catch {
         // leaving the temp file behind is harmless
+      }
+    }
+    if (croppedUri && croppedUri !== item.uri) {
+      try {
+        new File(croppedUri).delete();
+      } catch {
+        // leaving the cropped temp behind is harmless
       }
     }
     queue = queue.filter((q) => q.id !== item.id);

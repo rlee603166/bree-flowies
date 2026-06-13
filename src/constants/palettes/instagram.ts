@@ -17,6 +17,7 @@ export const instagram: Palette = {
   accent: '#0095F6',
   onAccent: '#FFFFFF',
   danger: '#ED4956',
+  recording: '#FF3B30',
 
   scrim: 'rgba(0,0,0,0.5)',
   scrimStrong: 'rgba(0,0,0,0.7)',

@@ -67,7 +67,7 @@ export function SwipeTabs({
                   {tab.label}
                 </ThemedText>
               )}
-              <View style={[styles.underline, { backgroundColor: active ? theme.accent : 'transparent' }]} />
+              <View style={[styles.underline, { backgroundColor: active ? theme.text : 'transparent' }]} />
             </Pressable>
           );
         })}

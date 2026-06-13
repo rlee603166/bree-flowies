@@ -16,6 +16,7 @@ export const warmSocial: Palette = {
   accent: '#FF8A5B',
   onAccent: '#2A1206',
   danger: '#FF5247',
+  recording: '#FF3B30',
 
   scrim: 'rgba(0,0,0,0.35)',
   scrimStrong: 'rgba(0,0,0,0.65)',

@@ -14,6 +14,7 @@ export const filmLab: Palette = {
   accent: '#D4FF3F',
   onAccent: '#15170A',
   danger: '#FF4D3D',
+  recording: '#FF3B30',
 
   scrim: 'rgba(0,0,0,0.3)',
   scrimStrong: 'rgba(0,0,0,0.6)',

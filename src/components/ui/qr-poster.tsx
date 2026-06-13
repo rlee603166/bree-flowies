@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 28,
     letterSpacing: 8,
-    color: Colors.accent,
+    color: Colors.posterInk,
     textAlign: 'center',
   },
 });

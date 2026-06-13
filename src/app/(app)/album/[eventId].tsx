@@ -106,7 +106,7 @@ export default function AlbumScreen() {
             </ThemedText>
             {showCountdown && remainingMs !== null ? (
               <>
-                <ThemedText themeColor="accent" style={styles.countdown}>
+                <ThemedText themeColor="text" style={styles.countdown}>
                   {formatCountdown(remainingMs)}
                 </ThemedText>
                 <ThemedText type="label" themeColor="textSecondary" style={styles.lockedText}>
@@ -114,7 +114,7 @@ export default function AlbumScreen() {
                 </ThemedText>
               </>
             ) : (
-              <ThemedText type="label" themeColor="accent" style={styles.lockedText}>
+              <ThemedText type="label" themeColor="textSecondary" style={styles.lockedText}>
                 roll ready {formatDevelopTime(event?.develops_at ?? null)}
               </ThemedText>
             )}
